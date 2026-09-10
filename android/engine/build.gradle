@@ -15,8 +15,8 @@ android {
         // Binder/reflection compatibility engine while remaining installable on
         // Android 14/15/16 (whose documented low-target install floor is below 28).
         targetSdk 28
-        versionCode 4
-        versionName "0.4.0"
+        versionCode 5
+        versionName "0.5.0"
         multiDexEnabled true
     }
 
