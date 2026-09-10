@@ -41,17 +41,36 @@ jobs:
       - name: Fetch and patch compatibility engine
         run: bash scripts/fetch_engine.sh
 
-      - name: Verify application bootstrap recovery patch
+      - name: Verify application bootstrap translation
         shell: bash
         run: |
           set -euo pipefail
           ENGINE="third_party/NewBlackbox/Bcore/src/main/java/top/niunaijun/blackbox/app/BActivityThread.java"
           grep -q 'application = createApplicationWithFallback(applicationInfo);' "$ENGINE"
           grep -q 'application = createMinimalApplication(packageContext, packageName);' "$ENGINE"
+          grep -q 'AppInstrumentation.get().newApplication(' "$ENGINE"
+          grep -q 'Application.class.getDeclaredMethod("attach", Context.class)' "$ENGINE"
+          grep -q 'Guest startup failed at ' "$ENGINE"
+          grep -q 'startupStage = "Application.onCreate";' "$ENGINE"
           if grep -q 'application = (Application) packageContext;' "$ENGINE"; then
             echo "Broken Context-to-Application fallback is still present" >&2
             exit 1
           fi
+          if grep -q 'Application.class.getDeclaredMethod("attachBaseContext", Context.class)' "$ENGINE"; then
+            echo "Broken Application.attachBaseContext reflection is still present" >&2
+            exit 1
+          fi
+
+      - name: Verify host-helper version contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          HOST_CODE="$(grep -E '^[[:space:]]*versionCode[[:space:]]+[0-9]+' android/app/build.gradle | head -n1 | awk '{print $2}')"
+          ENGINE_CODE="$(grep -E '^[[:space:]]*versionCode[[:space:]]+[0-9]+' android/engine/build.gradle | head -n1 | awk '{print $2}')"
+          PUBSPEC_CODE="$(awk -F'+' '/^version: / {print $2}' pubspec.yaml)"
+          test -n "$HOST_CODE" && test "$HOST_CODE" = "$ENGINE_CODE" && test "$HOST_CODE" = "$PUBSPEC_CODE"
+          grep -q 'BuildConfig.VERSION_CODE.toLong()' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
+          echo "Host/helper version contract verified at versionCode=$HOST_CODE"
 
       - name: Prepare Gradle wrapper
         shell: bash
@@ -125,14 +144,14 @@ jobs:
           grep -q '^assets/engines/appcompat-engine64.apk$' /tmp/appcompat-smart-files.txt
 
           "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose "$APK"
-          cp "$APK" AppCompat-smart-v0.5.0.apk
-          ls -lh AppCompat-smart-v0.5.0.apk
-          sha256sum AppCompat-smart-v0.5.0.apk
+          cp "$APK" AppCompat-smart-v0.6.0.apk
+          ls -lh AppCompat-smart-v0.6.0.apk
+          sha256sum AppCompat-smart-v0.6.0.apk
 
       - name: Upload smart APK
         uses: actions/upload-artifact@v4
         with:
-          name: AppCompat-smart-v0.5.0-apk
-          path: AppCompat-smart-v0.5.0.apk
+          name: AppCompat-smart-v0.6.0-apk
+          path: AppCompat-smart-v0.6.0.apk
           if-no-files-found: error
           retention-days: 14
