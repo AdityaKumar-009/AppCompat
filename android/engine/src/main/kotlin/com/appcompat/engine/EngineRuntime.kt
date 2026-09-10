@@ -48,9 +48,9 @@ object EngineRuntime {
                 return
             }
 
-            // This handler is installed in every helper/guest process that loads the
-            // host Application, so a crash can be reported back instead of leaving the
-            // user with a frozen splash screen and no explanation.
+            // Installed in helper and guest processes. Persist the complete causal
+            // chain so AppCompat can distinguish an engine bootstrap failure from a
+            // crash thrown by the legacy app itself.
             BlackBoxCore.get().setExceptionHandler { thread, throwable ->
                 persistCrash(thread, throwable)
             }
@@ -98,14 +98,21 @@ object EngineRuntime {
 
     /**
      * BlackBox launch is asynchronous: returning true only means the proxy activity
-     * was scheduled. A number of old apps crash immediately after their first frame.
-     * Detect that short crash window, stop the stale guest process and retry once.
-     * We never wipe user data automatically.
+     * was scheduled. Detect the immediate Application/first-Activity crash window,
+     * stop the stale process and retry once. Guest data is never wiped automatically.
      */
     private fun launchWithRecovery(packageName: String, freshImport: Boolean): Map<String, Any?> {
         val context = appContext ?: return failure("Compatibility engine context is unavailable.", packageName)
         val core = BlackBoxCore.get()
         clearCrash(context)
+
+        // A newly selected APK may otherwise attach to a helper process left alive by
+        // an earlier attempt/version. A process-only cold start is safe: virtual app
+        // files, databases and preferences remain untouched.
+        if (freshImport) {
+            runCatching { core.stopPackage(packageName, USER_ID) }
+            Thread.sleep(180)
+        }
 
         var retryCount = 0
         var launched = core.launchApk(packageName, USER_ID)
@@ -122,46 +129,46 @@ object EngineRuntime {
                 "packageName" to packageName,
                 "engineBits" to BuildConfig.ENGINE_BITS,
                 "retryCount" to retryCount,
+                "compatibilityCode" to "LAUNCH_ACTIVITY_UNRESOLVED",
                 "message" to "The compatibility engine could not resolve or start the app's launch activity."
             )
         }
 
-        // Give Application.onCreate()/first Activity enough time to expose an
-        // immediate framework/JNI crash. This is bounded so launching stays snappy.
         val firstStartedAt = System.currentTimeMillis()
-        Thread.sleep(if (freshImport) 1400 else 1000)
+        Thread.sleep(if (freshImport) 1500 else 1100)
         var crash = recentCrash(context, packageName, firstStartedAt)
 
         if (crash != null) {
             retryCount++
-            Log.w(TAG, "Immediate guest crash detected for $packageName; retrying once")
+            Log.w(TAG, "Immediate guest crash detected for $packageName; performing cold-process retry")
             runCatching { core.stopPackage(packageName, USER_ID) }
             clearCrash(context)
-            Thread.sleep(350)
+            Thread.sleep(400)
             val retryStartedAt = System.currentTimeMillis()
             launched = core.launchApk(packageName, USER_ID)
             if (launched) {
-                Thread.sleep(1100)
+                Thread.sleep(1250)
                 crash = recentCrash(context, packageName, retryStartedAt)
             }
         }
 
         if (crash != null) {
+            val code = classifyCrash(crash)
+            val rootException = crash.optString("rootException")
+            val rootMessage = crash.optString("rootMessage")
             return linkedMapOf(
                 "launched" to false,
                 "crashDetected" to true,
                 "packageName" to packageName,
                 "engineBits" to BuildConfig.ENGINE_BITS,
                 "retryCount" to retryCount,
+                "compatibilityCode" to code,
                 "exception" to crash.optString("exception"),
                 "crashMessage" to crash.optString("message"),
-                "message" to buildString {
-                    append("The legacy app starts but crashes during initialization")
-                    val exception = crash.optString("exception")
-                    val detail = crash.optString("message")
-                    if (exception.isNotBlank()) append(" ($exception)")
-                    if (detail.isNotBlank()) append(": $detail")
-                }
+                "rootException" to rootException,
+                "rootMessage" to rootMessage,
+                "diagnosticStack" to crash.optString("stack"),
+                "message" to crashMessage(code, rootException, rootMessage)
             )
         }
 
@@ -170,6 +177,7 @@ object EngineRuntime {
             "packageName" to packageName,
             "engineBits" to BuildConfig.ENGINE_BITS,
             "retryCount" to retryCount,
+            "compatibilityCode" to "OK",
             "message" to if (retryCount > 0) {
                 "Launched after compatibility runtime recovery."
             } else {
@@ -211,6 +219,9 @@ object EngineRuntime {
                 "thread" to json.optString("thread"),
                 "exception" to json.optString("exception"),
                 "message" to json.optString("message"),
+                "rootException" to json.optString("rootException"),
+                "rootMessage" to json.optString("rootMessage"),
+                "compatibilityCode" to classifyCrash(json),
                 "stack" to json.optString("stack"),
                 "timestamp" to json.optLong("timestamp"),
                 "engineBits" to BuildConfig.ENGINE_BITS
@@ -255,12 +266,15 @@ object EngineRuntime {
     private fun persistCrash(thread: Thread, throwable: Throwable) {
         val context = appContext ?: return
         try {
-            val stack = throwable.stackTraceToString().take(24_000)
+            val root = deepestCause(throwable)
+            val stack = throwable.stackTraceToString().take(32_000)
             val json = JSONObject()
                 .put("packageName", try { BlackBoxCore.getAppPackageName() ?: "" } catch (_: Throwable) { "" })
                 .put("thread", thread.name)
                 .put("exception", throwable.javaClass.name)
                 .put("message", throwable.message ?: "")
+                .put("rootException", root.javaClass.name)
+                .put("rootMessage", root.message ?: "")
                 .put("stack", stack)
                 .put("timestamp", System.currentTimeMillis())
             File(context.filesDir, CRASH_FILE).writeText(json.toString())
@@ -269,10 +283,59 @@ object EngineRuntime {
         }
     }
 
+    private fun deepestCause(throwable: Throwable): Throwable {
+        var current = throwable
+        val seen = HashSet<Throwable>()
+        seen += current
+        while (current.cause != null && current.cause !== current && seen.add(current.cause!!)) {
+            current = current.cause!!
+        }
+        return current
+    }
+
+    private fun classifyCrash(crash: JSONObject): String {
+        val haystack = buildString {
+            append(crash.optString("exception")); append('\n')
+            append(crash.optString("message")); append('\n')
+            append(crash.optString("rootException")); append('\n')
+            append(crash.optString("rootMessage")); append('\n')
+            append(crash.optString("stack"))
+        }
+        return when {
+            haystack.contains("Unable to makeApplication", ignoreCase = true) ||
+                haystack.contains("makeApplication", ignoreCase = true) &&
+                haystack.contains("ClassCastException", ignoreCase = true) -> "APPLICATION_BOOTSTRAP"
+            haystack.contains("UnsatisfiedLinkError", ignoreCase = true) ||
+                haystack.contains("dlopen failed", ignoreCase = true) -> "NATIVE_LIBRARY"
+            haystack.contains("ClassNotFoundException", ignoreCase = true) ||
+                haystack.contains("NoClassDefFoundError", ignoreCase = true) -> "MISSING_CLASS"
+            haystack.contains("VerifyError", ignoreCase = true) -> "BYTECODE_VERIFY"
+            haystack.contains("SecurityException", ignoreCase = true) -> "PLATFORM_SECURITY"
+            else -> "GUEST_INITIALIZATION"
+        }
+    }
+
+    private fun crashMessage(code: String, rootException: String, rootMessage: String): String {
+        val detail = when {
+            rootMessage.isNotBlank() -> rootMessage
+            rootException.isNotBlank() -> rootException.substringAfterLast('.')
+            else -> "No deeper cause was reported."
+        }
+        return when (code) {
+            "APPLICATION_BOOTSTRAP" -> "Application bootstrap still failed after AppCompat's recovery ladder. Root cause: $detail"
+            "NATIVE_LIBRARY" -> "The app reached native-code loading but a required library could not be loaded. Root cause: $detail"
+            "MISSING_CLASS" -> "The app expects a framework/library class that is unavailable in this runtime. Root cause: $detail"
+            "BYTECODE_VERIFY" -> "Android rejected legacy bytecode during verification. Root cause: $detail"
+            "PLATFORM_SECURITY" -> "A modern Android security boundary rejected an operation during app startup. Root cause: $detail"
+            else -> "The legacy app itself still crashes during initialization after a cold-process retry. Root cause: $detail"
+        }
+    }
+
     private fun failure(message: String, packageName: String): Map<String, Any?> = linkedMapOf(
         "launched" to false,
         "packageName" to packageName,
         "engineBits" to BuildConfig.ENGINE_BITS,
+        "compatibilityCode" to "ENGINE_FAILURE",
         "message" to message
     )
 }
