@@ -1,7 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission
+        android:name="com.appcompat.runtime.permission.ENGINE"
+        android:protectionLevel="signature" />
+
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="com.appcompat.runtime.permission.ENGINE" />
 
     <queries>
+        <package android:name="com.appcompat.runtime.engine32" />
+        <package android:name="com.appcompat.runtime.engine64" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
@@ -21,8 +28,21 @@
         android:hardwareAccelerated="true"
         android:usesCleartextTraffic="true"
         android:extractNativeLibs="true"
-        android:multiArch="true"
-        android:use32bitAbi="true">
+        android:multiArch="true">
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/appcompat_file_paths" />
+        </provider>
+
+        <receiver
+            android:name=".EngineInstallReceiver"
+            android:exported="false" />
 
         <activity
             android:name=".MainActivity"
