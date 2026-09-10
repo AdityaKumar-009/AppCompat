@@ -66,6 +66,16 @@ android {
         }
     }
 
+    // targetSdk 28 is an intentional runtime-compatibility property of these
+    // private helper APKs. They are embedded in AppCompat and provisioned locally;
+    // they are not the Play-distributed user-facing application. Keep every other
+    // release lint check fatal and suppress only the Play target-SDK policy check.
+    lint {
+        disable += ["ExpiredTargetSdkVersion"]
+        abortOnError true
+        checkReleaseBuilds true
+    }
+
     buildTypes {
         debug {
             minifyEnabled false
