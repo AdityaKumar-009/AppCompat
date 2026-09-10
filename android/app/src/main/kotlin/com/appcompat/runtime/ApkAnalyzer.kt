@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.os.Process
 import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipFile
@@ -72,7 +71,6 @@ object ApkAnalyzer {
         val hasX8664 = abis.contains("x86_64")
         val has32 = hasArm32 || hasX86
         val has64 = hasArm64 || hasX8664
-        val runtimeIs64Bit = Process.is64Bit()
 
         // Android 14 blocks target < 23. Android 15+ raises that floor to target < 24.
         val lowTargetBlocked = when {
@@ -82,15 +80,15 @@ object ApkAnalyzer {
         }
         val minSdkBlock = minSdk > 0 && minSdk > hostSdk
         val deviceHasNo32BitRuntime = has32 && !has64 && Build.SUPPORTED_32_BIT_ABIS.isEmpty()
+        val deviceHasNo64BitRuntime = has64 && !has32 && Build.SUPPORTED_64_BIT_ABIS.isEmpty()
 
-        // A process has one ABI. The fat AppCompat APK deliberately prefers its 32-bit
-        // process on dual-ABI devices because the legacy apps that actually need the
-        // virtual runtime are disproportionately 32-bit. Apps that Android can run
-        // natively are never forced through the virtual process just because they are old.
-        val runtimeBitnessMismatch = when {
-            abis.isEmpty() || !nativeCompatible -> false
-            runtimeIs64Bit && has32 && !has64 -> true
-            !runtimeIs64Bit && has64 && !has32 -> true
+        // Helper runtimes currently support ARM Android guests. Pure Java/Kotlin APKs
+        // are architecture neutral. x86-only native code on an ARM phone requires CPU
+        // translation/full emulation and must not be presented as a normal virtual run.
+        val helperNativeCompatible = when {
+            abis.isEmpty() -> true
+            hasArm64 && Build.SUPPORTED_64_BIT_ABIS.any { it == "arm64-v8a" } -> true
+            hasArm32 && Build.SUPPORTED_32_BIT_ABIS.any { it == "armeabi-v7a" || it == "armeabi" } -> true
             else -> false
         }
 
@@ -119,8 +117,18 @@ object ApkAnalyzer {
             requestedPermissions.any { it in integrationPermissionHints } ||
             boundServicePermissions.any { it in privilegedServiceHints }
 
-        val nativeInstallable = !lowTargetBlocked && !minSdkBlock && nativeCompatible && !deviceHasNo32BitRuntime
-        val virtualCompatible = !minSdkBlock && nativeCompatible && !deviceHasNo32BitRuntime && !runtimeBitnessMismatch
+        val nativeInstallable = !lowTargetBlocked && !minSdkBlock && nativeCompatible &&
+            !deviceHasNo32BitRuntime && !deviceHasNo64BitRuntime
+        val virtualCompatible = !minSdkBlock && helperNativeCompatible &&
+            !deviceHasNo32BitRuntime && !deviceHasNo64BitRuntime
+
+        val preferredEngineBits = when {
+            abis.isEmpty() && Build.SUPPORTED_64_BIT_ABIS.isNotEmpty() -> 64
+            abis.isEmpty() && Build.SUPPORTED_32_BIT_ABIS.isNotEmpty() -> 32
+            hasArm64 && Build.SUPPORTED_64_BIT_ABIS.any { it == "arm64-v8a" } -> 64
+            hasArm32 && Build.SUPPORTED_32_BIT_ABIS.any { it == "armeabi-v7a" || it == "armeabi" } -> 32
+            else -> 0
+        }
 
         val legacyStorage = targetSdk <= 28 && requestedPermissions.any {
             it == "android.permission.READ_EXTERNAL_STORAGE" ||
@@ -129,66 +137,63 @@ object ApkAnalyzer {
 
         val issues = mutableListOf<String>()
         if (nativeInstallable && targetSdk <= 28) {
-            issues += "Android can still run this APK directly. Native execution is preferred because it preserves real system services, roles, widgets, launchers and account integration."
+            issues += "Android can still execute this APK directly. Native execution is preferred because it preserves real platform services, roles, widgets, launchers, accounts and OEM integrations."
         }
         if (systemIntegrated && nativeInstallable) {
-            issues += "This app depends on system-level integration. AppCompat will use Android's native install path instead of sandboxing it, which avoids common launcher/widget/service crashes."
+            issues += "This app depends on system-level integration, so AppCompat will prefer Android's native install path instead of a sandboxed framework clone."
         }
         if (lowTargetBlocked) {
-            issues += "Modern Android blocks normal installation at this target SDK; AppCompat will use the compatibility runtime when the CPU ABI can be hosted safely."
+            issues += "Modern Android blocks normal installation at this target SDK. AppCompat will route it to an ABI-matched compatibility runtime when the device can host that CPU architecture."
         }
         if (deviceHasNo32BitRuntime) {
-            issues += "This APK contains only 32-bit native code, while this device exposes no 32-bit Android runtime. A system-level native bridge/emulator is required; an ordinary app cannot manufacture a missing 32-bit Zygote."
+            issues += "This APK contains only 32-bit native code, but the device exposes no 32-bit Android application runtime. Full CPU translation or a legacy guest OS is required."
+        } else if (deviceHasNo64BitRuntime) {
+            issues += "This APK contains only 64-bit native code, but the device exposes no compatible 64-bit application runtime."
         } else if (!nativeCompatible) {
-            issues += "The APK native libraries do not match any CPU ABI exposed by this device."
-        } else if (runtimeBitnessMismatch && lowTargetBlocked) {
-            val guestBits = if (has32 && !has64) "32-bit" else "64-bit"
-            val runtimeBits = if (runtimeIs64Bit) "64-bit" else "32-bit"
-            issues += "This blocked APK is $guestBits while AppCompat's virtual process is $runtimeBits. Android cannot change a process ABI after launch, so this specific combination cannot be virtualized inside one package."
+            issues += "The APK native libraries do not match an ABI Android exposes on this device."
+        }
+        if (!helperNativeCompatible && !nativeInstallable && !abis.isEmpty()) {
+            issues += "This APK needs instruction-set translation that the lightweight compatibility engine does not provide."
         }
         if (systemIntegrated && lowTargetBlocked) {
-            issues += "This app needs OS-level roles/services and is below Android's install floor. A virtual container is unlikely to reproduce those privileged integrations reliably."
+            issues += "This app relies on privileged/system integration. AppCompat can attempt userspace virtualization, but Android roles, signature services or OEM-only binders may still be unavailable."
         }
         if (legacyStorage) {
-            issues += "The app uses legacy external-storage behavior. AppCompat isolates virtual storage; native mode lets Android apply its own compatibility layer."
+            issues += "The app uses legacy external-storage behavior. Native mode lets Android apply its platform compatibility behavior; virtual mode redirects supported filesystem calls."
         }
         if (targetSdk in 1..22) {
-            issues += "Very old framework behavior detected (target API $targetSdk); service and permission translation may be required."
+            issues += "Very old framework behavior detected (target API $targetSdk); service, permission and storage translation may be required."
         } else if (targetSdk in 23..28) {
-            issues += "Legacy Android behavior detected (target API $targetSdk); AppCompat will choose native or virtual execution based on what is safest for this APK."
+            issues += "Legacy Android behavior detected (target API $targetSdk); AppCompat will choose the least invasive execution route available."
         }
         if (minSdkBlock) {
-            issues += "The APK declares a newer minimum Android API than this host device provides."
+            issues += "The APK declares a minimum Android API newer than this host device."
         }
         if (requestedPermissions.any { it == "android.permission.GET_ACCOUNTS" || it == "android.permission.USE_CREDENTIALS" }) {
-            issues += "The app depends on legacy account APIs; account-backed sign-in may require services that no longer exist."
+            issues += "The app depends on legacy account APIs; account-backed sign-in may still depend on services or servers that no longer exist."
         }
 
-        // Native-first is intentional. Process-level virtualization cannot perfectly
-        // emulate launcher roles, app-widget hosts, OEM binders, DRM, Play services or
-        // privileged services. Use it only when Android itself refuses the old target.
+        // Native-first avoids needless emulation. If Android blocks only the target
+        // SDK floor, use the matching helper process even for system-integrated apps;
+        // the attempt is valuable, but the UI keeps the caveat visible.
         val route = when {
-            minSdkBlock || !nativeCompatible || deviceHasNo32BitRuntime -> "limited"
+            minSdkBlock || deviceHasNo32BitRuntime || deviceHasNo64BitRuntime -> "limited"
             nativeInstallable -> "native"
-            systemIntegrated -> "limited"
             virtualCompatible -> "virtual"
             else -> "limited"
         }
-        val abiCompatible = if (route == "virtual") virtualCompatible else nativeCompatible && !deviceHasNo32BitRuntime
-
-        val guestBits = when {
-            has32 && !has64 -> 32
-            has64 && !has32 -> 64
-            has32 && has64 -> if (runtimeIs64Bit) 64 else 32
-            else -> if (runtimeIs64Bit) 64 else 32
+        val abiCompatible = when (route) {
+            "virtual" -> virtualCompatible
+            "native" -> nativeInstallable
+            else -> false
         }
 
         val confidence = when {
-            route == "native" && systemIntegrated -> "High — native Android path avoids virtualized system-service gaps"
+            route == "native" && systemIntegrated -> "High — real Android services and roles are preserved"
             route == "native" -> "High — Android can execute this APK directly"
-            route == "virtual" && abis.isEmpty() -> "High for self-contained Java/Kotlin apps"
-            route == "virtual" -> "Medium — virtualized native code can still hit device-specific hooks"
-            else -> "Limited — unresolved CPU, target-SDK, or privileged system-integration requirement"
+            route == "virtual" && abis.isEmpty() -> "High for self-contained Java/Kotlin apps; service dependencies can still fail"
+            route == "virtual" -> "Medium — native/JNI and framework assumptions can still be app-specific"
+            else -> "Limited — a platform, CPU, hardware or external dependency is unresolved"
         }
 
         return linkedMapOf(
@@ -203,8 +208,7 @@ object ApkAnalyzer {
             "sizeBytes" to apk.length(),
             "abis" to abis.toList(),
             "hostAbis" to Build.SUPPORTED_ABIS.toList(),
-            "runtimeBits" to if (runtimeIs64Bit) 64 else 32,
-            "guestBits" to guestBits,
+            "preferredEngineBits" to preferredEngineBits,
             "dexCount" to dexCount,
             "hasNativeCode" to abis.isNotEmpty(),
             "abiCompatible" to abiCompatible,
