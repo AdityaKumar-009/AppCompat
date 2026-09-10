@@ -13,6 +13,7 @@ import java.io.FileOutputStream
 object EngineRuntime {
     private const val TAG = "AppCompatEngine"
     private const val USER_ID = 0
+    private const val CRASH_FILE = "last-guest-crash.json"
 
     @Volatile
     var ready: Boolean = false
@@ -47,6 +48,9 @@ object EngineRuntime {
                 return
             }
 
+            // This handler is installed in every helper/guest process that loads the
+            // host Application, so a crash can be reported back instead of leaving the
+            // user with a frozen splash screen and no explanation.
             BlackBoxCore.get().setExceptionHandler { thread, throwable ->
                 persistCrash(thread, throwable)
             }
@@ -75,17 +79,7 @@ object EngineRuntime {
                 if (!install.packageName.isNullOrBlank()) packageName = install.packageName
             }
 
-            val launched = core.launchApk(packageName, USER_ID)
-            linkedMapOf(
-                "launched" to launched,
-                "packageName" to packageName,
-                "engineBits" to BuildConfig.ENGINE_BITS,
-                "message" to if (launched) {
-                    "Launched with the ${BuildConfig.ENGINE_BITS}-bit compatibility engine."
-                } else {
-                    "The app was imported but Android could not start its launch activity."
-                }
-            )
+            launchWithRecovery(packageName, freshImport = true)
         } catch (t: Throwable) {
             Log.e(TAG, "Virtual install/launch failed", t)
             failure(t.message ?: t.javaClass.simpleName, expectedPackage)
@@ -95,22 +89,99 @@ object EngineRuntime {
     fun launch(packageName: String): Map<String, Any?> {
         if (!ready) return failure("Compatibility engine is not ready.", packageName)
         return try {
-            val launched = BlackBoxCore.get().launchApk(packageName, USER_ID)
-            linkedMapOf(
-                "launched" to launched,
-                "packageName" to packageName,
-                "engineBits" to BuildConfig.ENGINE_BITS,
-                "message" to if (launched) "Launched" else "The compatibility engine could not start this app."
-            )
+            launchWithRecovery(packageName, freshImport = false)
         } catch (t: Throwable) {
             Log.e(TAG, "Launch failed for $packageName", t)
             failure(t.message ?: t.javaClass.simpleName, packageName)
         }
     }
 
+    /**
+     * BlackBox launch is asynchronous: returning true only means the proxy activity
+     * was scheduled. A number of old apps crash immediately after their first frame.
+     * Detect that short crash window, stop the stale guest process and retry once.
+     * We never wipe user data automatically.
+     */
+    private fun launchWithRecovery(packageName: String, freshImport: Boolean): Map<String, Any?> {
+        val context = appContext ?: return failure("Compatibility engine context is unavailable.", packageName)
+        val core = BlackBoxCore.get()
+        clearCrash(context)
+
+        var retryCount = 0
+        var launched = core.launchApk(packageName, USER_ID)
+        if (!launched) {
+            retryCount++
+            runCatching { core.stopPackage(packageName, USER_ID) }
+            Thread.sleep(300)
+            launched = core.launchApk(packageName, USER_ID)
+        }
+
+        if (!launched) {
+            return linkedMapOf(
+                "launched" to false,
+                "packageName" to packageName,
+                "engineBits" to BuildConfig.ENGINE_BITS,
+                "retryCount" to retryCount,
+                "message" to "The compatibility engine could not resolve or start the app's launch activity."
+            )
+        }
+
+        // Give Application.onCreate()/first Activity enough time to expose an
+        // immediate framework/JNI crash. This is bounded so launching stays snappy.
+        val firstStartedAt = System.currentTimeMillis()
+        Thread.sleep(if (freshImport) 1400 else 1000)
+        var crash = recentCrash(context, packageName, firstStartedAt)
+
+        if (crash != null) {
+            retryCount++
+            Log.w(TAG, "Immediate guest crash detected for $packageName; retrying once")
+            runCatching { core.stopPackage(packageName, USER_ID) }
+            clearCrash(context)
+            Thread.sleep(350)
+            val retryStartedAt = System.currentTimeMillis()
+            launched = core.launchApk(packageName, USER_ID)
+            if (launched) {
+                Thread.sleep(1100)
+                crash = recentCrash(context, packageName, retryStartedAt)
+            }
+        }
+
+        if (crash != null) {
+            return linkedMapOf(
+                "launched" to false,
+                "crashDetected" to true,
+                "packageName" to packageName,
+                "engineBits" to BuildConfig.ENGINE_BITS,
+                "retryCount" to retryCount,
+                "exception" to crash.optString("exception"),
+                "crashMessage" to crash.optString("message"),
+                "message" to buildString {
+                    append("The legacy app starts but crashes during initialization")
+                    val exception = crash.optString("exception")
+                    val detail = crash.optString("message")
+                    if (exception.isNotBlank()) append(" ($exception)")
+                    if (detail.isNotBlank()) append(": $detail")
+                }
+            )
+        }
+
+        return linkedMapOf(
+            "launched" to true,
+            "packageName" to packageName,
+            "engineBits" to BuildConfig.ENGINE_BITS,
+            "retryCount" to retryCount,
+            "message" to if (retryCount > 0) {
+                "Launched after compatibility runtime recovery."
+            } else {
+                "Launched with the ${BuildConfig.ENGINE_BITS}-bit compatibility runtime."
+            }
+        )
+    }
+
     fun remove(packageName: String): Map<String, Any?> {
         if (!ready) return failure("Compatibility engine is not ready.", packageName)
         return try {
+            runCatching { BlackBoxCore.get().stopPackage(packageName, USER_ID) }
             BlackBoxCore.get().uninstallPackageAsUser(packageName, USER_ID)
             linkedMapOf(
                 "removed" to true,
@@ -131,7 +202,7 @@ object EngineRuntime {
 
     fun lastCrash(): Map<String, Any?> {
         val context = appContext ?: return emptyMap()
-        val file = File(context.filesDir, "last-guest-crash.json")
+        val file = File(context.filesDir, CRASH_FILE)
         if (!file.isFile) return emptyMap()
         return try {
             val json = JSONObject(file.readText())
@@ -163,6 +234,24 @@ object EngineRuntime {
         return destination
     }
 
+    private fun clearCrash(context: Context) {
+        runCatching { File(context.filesDir, CRASH_FILE).delete() }
+    }
+
+    private fun recentCrash(context: Context, packageName: String, startedAt: Long): JSONObject? {
+        val file = File(context.filesDir, CRASH_FILE)
+        if (!file.isFile) return null
+        return try {
+            val json = JSONObject(file.readText())
+            val timestamp = json.optLong("timestamp", 0L)
+            val recordedPackage = json.optString("packageName")
+            if (timestamp >= startedAt - 100L &&
+                (recordedPackage.isBlank() || recordedPackage == packageName)) json else null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     private fun persistCrash(thread: Thread, throwable: Throwable) {
         val context = appContext ?: return
         try {
@@ -174,7 +263,7 @@ object EngineRuntime {
                 .put("message", throwable.message ?: "")
                 .put("stack", stack)
                 .put("timestamp", System.currentTimeMillis())
-            File(context.filesDir, "last-guest-crash.json").writeText(json.toString())
+            File(context.filesDir, CRASH_FILE).writeText(json.toString())
         } catch (t: Throwable) {
             Log.w(TAG, "Could not persist guest crash", t)
         }
