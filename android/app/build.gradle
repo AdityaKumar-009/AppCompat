@@ -43,9 +43,14 @@ android {
     buildTypes {
         debug {
             minifyEnabled false
+            shrinkResources false
         }
         release {
+            // Keep the virtualization engine intact. Resource shrinking cannot be
+            // enabled when code shrinking is disabled, and R8 can also strip
+            // classes that this runtime reaches reflectively.
             minifyEnabled false
+            shrinkResources false
             signingConfig signingConfigs.debug
         }
     }
