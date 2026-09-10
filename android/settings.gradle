@@ -25,6 +25,7 @@ plugins {
 }
 
 include ":app"
+include ":engine"
 include ":Bcore"
 include ":black-reflection"
 include ":compiler"
