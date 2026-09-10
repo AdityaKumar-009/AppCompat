@@ -31,8 +31,13 @@ object EngineBroker {
     const val ACTION_LAST_CRASH = "com.appcompat.runtime.engine.LAST_CRASH"
     const val BRIDGE_CLASS = "com.appcompat.engine.EngineBridgeActivity"
 
-    private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32"
-    private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64"
+    // v0.6 moves to versioned helper package IDs. Earlier prototype builds used
+    // ephemeral CI debug certificates, so Android may refuse an in-place upgrade
+    // of an already-installed helper even when its versionCode is newer. A fresh
+    // package namespace guarantees this host cannot accidentally execute the v0.4
+    // helper and also avoids UPDATE_INCOMPATIBLE during this migration.
+    private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v6"
+    private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v6"
     private const val REGISTRY_PREFS = "appcompat_virtual_registry"
     private const val REGISTRY_JSON = "apps"
 
