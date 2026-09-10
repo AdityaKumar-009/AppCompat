@@ -13,8 +13,8 @@ android {
         applicationId "com.appcompat.runtime"
         minSdk 24
         targetSdk 33
-        versionCode 3
-        versionName "0.3.0"
+        versionCode 4
+        versionName "0.4.0"
         multiDexEnabled true
     }
 
@@ -46,9 +46,6 @@ android {
             shrinkResources false
         }
         release {
-            // Keep the virtualization engine intact. Resource shrinking cannot be
-            // enabled when code shrinking is disabled, and R8 can also strip
-            // classes that this runtime reaches reflectively.
             minifyEnabled false
             shrinkResources false
             signingConfig signingConfigs.debug
@@ -61,6 +58,8 @@ flutter {
 }
 
 dependencies {
-    implementation project(":Bcore")
+    // The visible Flutter host is deliberately UI-only. Guest code runs in a
+    // separately ABI-selected runtime process/package provisioned from assets.
+    implementation "androidx.core:core-ktx:1.17.0"
     implementation "androidx.multidex:multidex:2.0.1"
 }
