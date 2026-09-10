@@ -38,8 +38,20 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.13846066"
 
-      - name: Fetch pinned compatibility engine
+      - name: Fetch and patch compatibility engine
         run: bash scripts/fetch_engine.sh
+
+      - name: Verify application bootstrap recovery patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENGINE="third_party/NewBlackbox/Bcore/src/main/java/top/niunaijun/blackbox/app/BActivityThread.java"
+          grep -q 'application = createApplicationWithFallback(applicationInfo);' "$ENGINE"
+          grep -q 'application = createMinimalApplication(packageContext, packageName);' "$ENGINE"
+          if grep -q 'application = (Application) packageContext;' "$ENGINE"; then
+            echo "Broken Context-to-Application fallback is still present" >&2
+            exit 1
+          fi
 
       - name: Prepare Gradle wrapper
         shell: bash
@@ -113,14 +125,14 @@ jobs:
           grep -q '^assets/engines/appcompat-engine64.apk$' /tmp/appcompat-smart-files.txt
 
           "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose "$APK"
-          cp "$APK" AppCompat-smart-v0.4.0.apk
-          ls -lh AppCompat-smart-v0.4.0.apk
-          sha256sum AppCompat-smart-v0.4.0.apk
+          cp "$APK" AppCompat-smart-v0.5.0.apk
+          ls -lh AppCompat-smart-v0.5.0.apk
+          sha256sum AppCompat-smart-v0.5.0.apk
 
       - name: Upload smart APK
         uses: actions/upload-artifact@v4
         with:
-          name: AppCompat-smart-v0.4.0-apk
-          path: AppCompat-smart-v0.4.0.apk
+          name: AppCompat-smart-v0.5.0-apk
+          path: AppCompat-smart-v0.5.0.apk
           if-no-files-found: error
           retention-days: 14
