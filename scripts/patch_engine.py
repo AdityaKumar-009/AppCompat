@@ -121,7 +121,7 @@ def main() -> None:
         "attach secondary Application fallback",
     )
 
-    # The minimal wrapper still needs a valid base context. Application does not
+    # Fallback wrappers still need a valid base context. Application does not
     # declare attachBaseContext; its hidden attach(Context) method is the framework
     # entry point. Fall back to ContextWrapper.attachBaseContext only if necessary.
     text = replace_once(
@@ -151,6 +151,38 @@ def main() -> None:
         "                }\n"
         "            }",
         "repair fallback Application context attach",
+    )
+
+    # The final createMinimalApplication() path contained the same invalid
+    # getDeclaredMethod lookup, so fix it independently rather than assuming the
+    # earlier Application fallback covered this code path.
+    text = replace_once(
+        text,
+        "                try {\n"
+        "                    Method attachBaseContext = Application.class.getDeclaredMethod(\"attachBaseContext\", Context.class);\n"
+        "                    attachBaseContext.setAccessible(true);\n"
+        "                    attachBaseContext.invoke(app, packageContext);\n"
+        "                    Slog.d(TAG, \"Successfully attached base context to minimal application for \" + packageName);\n"
+        "                } catch (Exception e) {\n"
+        "                    Slog.w(TAG, \"Could not attach base context to minimal application: \" + e.getMessage());\n"
+        "                }",
+        "                try {\n"
+        "                    Method attach = Application.class.getDeclaredMethod(\"attach\", Context.class);\n"
+        "                    attach.setAccessible(true);\n"
+        "                    attach.invoke(app, packageContext);\n"
+        "                    Slog.d(TAG, \"Successfully attached minimal application through framework attach() for \" + packageName);\n"
+        "                } catch (Throwable attachFailure) {\n"
+        "                    Slog.w(TAG, \"Minimal Application.attach failed, trying ContextWrapper attachBaseContext: \" + attachFailure.getMessage());\n"
+        "                    try {\n"
+        "                        Method attachBaseContext = ContextWrapper.class.getDeclaredMethod(\"attachBaseContext\", Context.class);\n"
+        "                        attachBaseContext.setAccessible(true);\n"
+        "                        attachBaseContext.invoke(app, packageContext);\n"
+        "                        Slog.d(TAG, \"Successfully attached minimal application through ContextWrapper for \" + packageName);\n"
+        "                    } catch (Throwable baseAttachFailure) {\n"
+        "                        Slog.e(TAG, \"Could not attach any base context to minimal application\", baseAttachFailure);\n"
+        "                    }\n"
+        "                }",
+        "repair minimal Application context attach",
     )
 
     # Track the exact startup phase so any remaining guest-specific failure is no
@@ -240,6 +272,8 @@ def main() -> None:
         "application = createMinimalApplication(packageContext, packageName);",
         "AppInstrumentation.get().newApplication(",
         "Application.class.getDeclaredMethod(\"attach\", Context.class)",
+        "ContextWrapper.class.getDeclaredMethod(\"attachBaseContext\", Context.class)",
+        "Successfully attached minimal application through framework attach()",
         "Guest startup failed at ",
         "startupStage = \"Application.onCreate\";",
     ]
