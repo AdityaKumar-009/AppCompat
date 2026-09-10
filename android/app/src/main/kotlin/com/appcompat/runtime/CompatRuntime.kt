@@ -49,9 +49,15 @@ object CompatRuntime {
         return try {
             val core = BlackBoxCore.get()
             var packageName = expectedPackage
+            val apkFile = File(path)
+            if (!apkFile.isFile || !apkFile.canRead()) {
+                return mapOf("launched" to false, "message" to "The imported APK file is no longer readable.")
+            }
 
             if (!core.isInstalled(expectedPackage, USER_ID)) {
-                val install = core.installPackageAsUser(path, USER_ID)
+                // BlackBox's String overload means an already-installed package name.
+                // A selected raw APK must use the File overload.
+                val install = core.installPackageAsUser(apkFile, USER_ID)
                 if (!install.success) {
                     return mapOf(
                         "launched" to false,
