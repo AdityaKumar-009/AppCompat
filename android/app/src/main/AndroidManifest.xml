@@ -1,6 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+    </queries>
+
     <application
         android:name=".AppCompatApplication"
         android:label="AppCompat"
@@ -9,7 +20,9 @@
         android:fullBackupContent="false"
         android:hardwareAccelerated="true"
         android:usesCleartextTraffic="true"
-        android:extractNativeLibs="true">
+        android:extractNativeLibs="true"
+        android:multiArch="true"
+        android:use32bitAbi="true">
 
         <activity
             android:name=".MainActivity"
