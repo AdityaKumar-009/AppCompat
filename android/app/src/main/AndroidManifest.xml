@@ -7,8 +7,8 @@
     <uses-permission android:name="com.appcompat.runtime.permission.ENGINE" />
 
     <queries>
-        <package android:name="com.appcompat.runtime.engine32" />
-        <package android:name="com.appcompat.runtime.engine64" />
+        <package android:name="com.appcompat.runtime.engine32.v6" />
+        <package android:name="com.appcompat.runtime.engine64.v6" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
