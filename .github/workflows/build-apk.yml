@@ -51,10 +51,10 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.11.1"
+          gradle-version: "8.14.0"
 
       - name: Generate Gradle wrapper
-        run: gradle -p android wrapper --gradle-version 8.11.1
+        run: gradle -p android wrapper --gradle-version 8.14.0
 
       - name: Resolve Flutter packages
         run: flutter pub get
@@ -62,16 +62,16 @@ jobs:
       - name: Static analysis
         run: flutter analyze
 
-      - name: Build debug APK
-        run: flutter build apk --debug
+      - name: Build installable APK
+        run: flutter build apk --release
 
       - name: Prepare artifact
-        run: cp build/app/outputs/flutter-apk/app-debug.apk AppCompat-debug.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk AppCompat.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AppCompat-debug-apk
-          path: AppCompat-debug.apk
+          name: AppCompat-apk
+          path: AppCompat.apk
           if-no-files-found: error
           retention-days: 14
