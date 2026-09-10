@@ -210,7 +210,7 @@ class MainActivity : FlutterActivity() {
             try {
                 waitingForUnknownSources = true
                 startActivityForResult(
-                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")),
+                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${this.packageName}")),
                     REQUEST_UNKNOWN_SOURCES
                 )
                 return
