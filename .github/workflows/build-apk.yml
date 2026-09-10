@@ -65,42 +65,62 @@ jobs:
       - name: Static analysis
         run: flutter analyze
 
-      - name: Verify Gradle project
+      - name: Build ABI-isolated helper runtimes
         working-directory: android
-        run: ./gradlew :app:tasks --no-daemon --stacktrace
+        run: ./gradlew :engine:assembleArm32Release :engine:assembleArm64Release --no-daemon --stacktrace
+
+      - name: Verify and embed helper runtimes
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARM32="$(find build/engine/outputs/apk -type f -name '*arm32*release*.apk' | head -n 1)"
+          ARM64="$(find build/engine/outputs/apk -type f -name '*arm64*release*.apk' | head -n 1)"
+          test -n "$ARM32" && test -s "$ARM32"
+          test -n "$ARM64" && test -s "$ARM64"
+
+          zipinfo -1 "$ARM32" > /tmp/engine32-files.txt
+          zipinfo -1 "$ARM64" > /tmp/engine64-files.txt
+          grep -q '^lib/armeabi-v7a/libblackbox.so$' /tmp/engine32-files.txt
+          ! grep -q '^lib/arm64-v8a/' /tmp/engine32-files.txt
+          grep -q '^lib/arm64-v8a/libblackbox.so$' /tmp/engine64-files.txt
+          ! grep -q '^lib/armeabi-v7a/' /tmp/engine64-files.txt
+
+          "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify "$ARM32"
+          "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify "$ARM64"
+
+          mkdir -p android/app/src/main/assets/engines
+          cp "$ARM32" android/app/src/main/assets/engines/appcompat-engine32.apk
+          cp "$ARM64" android/app/src/main/assets/engines/appcompat-engine64.apk
+          ls -lh android/app/src/main/assets/engines/*.apk
 
       - name: Build one smart multi-ABI APK
         run: flutter build apk --release --target-platform android-arm,android-arm64 --verbose
 
-      - name: Verify smart APK
+      - name: Verify final single APK
         shell: bash
         run: |
           set -euo pipefail
           APK="build/app/outputs/flutter-apk/app-release.apk"
           test -s "$APK"
-          zipinfo -1 "$APK" > /tmp/appcompat-files.txt
+          zipinfo -1 "$APK" > /tmp/appcompat-smart-files.txt
 
-          # One downloadable APK must carry both Flutter and compatibility native code.
-          grep -q '^lib/armeabi-v7a/libflutter.so$' /tmp/appcompat-files.txt
-          grep -q '^lib/arm64-v8a/libflutter.so$' /tmp/appcompat-files.txt
-          grep -q '^lib/armeabi-v7a/libblackbox.so$' /tmp/appcompat-files.txt
-          grep -q '^lib/arm64-v8a/libblackbox.so$' /tmp/appcompat-files.txt
+          # One user-facing APK contains the Flutter host for both common ARM ABIs
+          # plus both signed helper runtimes. The helper chosen at runtime is based
+          # on the imported guest APK's native libraries.
+          grep -q '^lib/armeabi-v7a/libflutter.so$' /tmp/appcompat-smart-files.txt
+          grep -q '^lib/arm64-v8a/libflutter.so$' /tmp/appcompat-smart-files.txt
+          grep -q '^assets/engines/appcompat-engine32.apk$' /tmp/appcompat-smart-files.txt
+          grep -q '^assets/engines/appcompat-engine64.apk$' /tmp/appcompat-smart-files.txt
 
-          # The manifest must prefer a 32-bit process on dual-ABI devices so genuinely
-          # old 32-bit apps can use the virtual runtime, while 64-bit-only devices can
-          # still fall back to their available ABI.
-          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump xmltree "$APK" --file AndroidManifest.xml > /tmp/manifest.txt
-          grep -q 'multiArch.*0xffffffff' /tmp/manifest.txt || grep -q 'multiArch.*true' /tmp/manifest.txt
-          grep -q 'use32bitAbi.*0xffffffff' /tmp/manifest.txt || grep -q 'use32bitAbi.*true' /tmp/manifest.txt
-
-          cp "$APK" AppCompat-smart.apk
-          ls -lh AppCompat-smart.apk
-          sha256sum AppCompat-smart.apk
+          "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          cp "$APK" AppCompat-smart-v0.4.0.apk
+          ls -lh AppCompat-smart-v0.4.0.apk
+          sha256sum AppCompat-smart-v0.4.0.apk
 
       - name: Upload smart APK
         uses: actions/upload-artifact@v4
         with:
-          name: AppCompat-smart-apk
-          path: AppCompat-smart.apk
+          name: AppCompat-smart-v0.4.0-apk
+          path: AppCompat-smart-v0.4.0.apk
           if-no-files-found: error
           retention-days: 14
