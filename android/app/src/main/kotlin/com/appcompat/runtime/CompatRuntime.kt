@@ -25,8 +25,6 @@ object CompatRuntime {
                 override fun isUseVpnNetwork(): Boolean = false
                 override fun isDisableFlagSecure(): Boolean = false
                 override fun requestInstallPackage(file: File?, userId: Int): Boolean = false
-
-                // Explicitly disable the upstream optional remote log sender.
                 override fun getLogSenderChatId(): String = ""
             }
         )
@@ -55,8 +53,6 @@ object CompatRuntime {
             }
 
             if (!core.isInstalled(expectedPackage, USER_ID)) {
-                // BlackBox's String overload means an already-installed package name.
-                // A selected raw APK must use the File overload.
                 val install = core.installPackageAsUser(apkFile, USER_ID)
                 if (!install.success) {
                     return mapOf(
@@ -68,11 +64,15 @@ object CompatRuntime {
                 if (!install.packageName.isNullOrBlank()) packageName = install.packageName
             }
 
-            val launched = core.launchApk(packageName, USER_ID)
+            val launched = launchWithRetry(core, packageName)
             mapOf(
                 "launched" to launched,
                 "packageName" to packageName,
-                "message" to if (launched) "Launched" else "The virtual package installed but Android could not start its launch activity."
+                "message" to if (launched) {
+                    "Launched"
+                } else {
+                    "The virtual package installed, but its launch activity did not become ready after a retry. This app may depend on a system role or service that cannot be virtualized."
+                }
             )
         } catch (t: Throwable) {
             Log.e(TAG, "Virtual install/launch failed", t)
@@ -83,11 +83,25 @@ object CompatRuntime {
     fun launch(packageName: String): Boolean {
         if (!ready) return false
         return try {
-            BlackBoxCore.get().launchApk(packageName, USER_ID)
+            launchWithRetry(BlackBoxCore.get(), packageName)
         } catch (t: Throwable) {
             Log.e(TAG, "Launch failed for $packageName", t)
             false
         }
+    }
+
+    private fun launchWithRetry(core: BlackBoxCore, packageName: String): Boolean {
+        if (core.launchApk(packageName, USER_ID)) return true
+        // Some very old apps register or restore virtual components immediately after
+        // installation. Give the engine one short settling window instead of leaving
+        // the user on a spinner or requiring another tap.
+        try {
+            Thread.sleep(450)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return false
+        }
+        return core.launchApk(packageName, USER_ID)
     }
 
     fun remove(packageName: String) {
