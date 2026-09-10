@@ -1,0 +1,34 @@
+pluginManagement {
+    def flutterSdkPath = {
+        def properties = new Properties()
+        file("local.properties").withInputStream { properties.load(it) }
+        def flutterSdkPath = properties.getProperty("flutter.sdk")
+        assert flutterSdkPath != null : "flutter.sdk not set in local.properties"
+        return flutterSdkPath
+    }()
+
+    includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
+
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+        maven { url "https://www.jitpack.io" }
+    }
+}
+
+plugins {
+    id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+    id "com.android.application" version "8.9.1" apply false
+    id "com.android.library" version "8.9.1" apply false
+    id "org.jetbrains.kotlin.android" version "2.1.0" apply false
+}
+
+include ":app"
+include ":Bcore"
+include ":black-reflection"
+include ":compiler"
+
+project(":Bcore").projectDir = file("../third_party/NewBlackbox/Bcore")
+project(":black-reflection").projectDir = file("../third_party/NewBlackbox/black-reflection")
+project(":compiler").projectDir = file("../third_party/NewBlackbox/compiler")
