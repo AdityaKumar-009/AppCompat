@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -41,6 +41,17 @@ jobs:
       - name: Fetch pinned compatibility engine
         run: bash scripts/fetch_engine.sh
 
+      - name: Prepare Gradle wrapper
+        shell: bash
+        run: |
+          rm -rf android/gradle android/gradlew android/gradlew.bat
+          cp -R third_party/NewBlackbox/gradle android/gradle
+          cp third_party/NewBlackbox/gradlew android/gradlew
+          cp third_party/NewBlackbox/gradlew.bat android/gradlew.bat
+          chmod +x android/gradlew
+          sed -i 's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.3-bin.zip#' android/gradle/wrapper/gradle-wrapper.properties
+          grep '^distributionUrl=' android/gradle/wrapper/gradle-wrapper.properties
+
       - name: Configure Flutter SDK path
         shell: bash
         run: |
@@ -48,25 +59,25 @@ jobs:
           FLUTTER_SDK="$(cd "$(dirname "$FLUTTER_BIN")/.." && pwd)"
           printf 'flutter.sdk=%s\n' "$FLUTTER_SDK" > android/local.properties
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.14.3"
-
-      - name: Generate Gradle wrapper
-        run: gradle -p android wrapper --gradle-version 8.14.3
-
       - name: Resolve Flutter packages
         run: flutter pub get
 
       - name: Static analysis
         run: flutter analyze
 
-      - name: Build installable APK
-        run: flutter build apk --release
+      - name: Verify Gradle project
+        working-directory: android
+        run: ./gradlew :app:tasks --no-daemon --stacktrace
 
-      - name: Prepare artifact
-        run: cp build/app/outputs/flutter-apk/app-release.apk AppCompat.apk
+      - name: Build installable APK
+        run: flutter build apk --release --verbose
+
+      - name: Verify APK exists
+        shell: bash
+        run: |
+          test -s build/app/outputs/flutter-apk/app-release.apk
+          cp build/app/outputs/flutter-apk/app-release.apk AppCompat.apk
+          ls -lh AppCompat.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
