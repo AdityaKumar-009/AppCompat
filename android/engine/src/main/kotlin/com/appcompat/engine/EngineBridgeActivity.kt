@@ -25,7 +25,12 @@ class EngineBridgeActivity : Activity() {
             val result = try {
                 when (action) {
                     ACTION_RUN -> {
-                        val uri = intent?.getStringExtra("uri").orEmpty()
+                        // The visible host grants only this exact APK through a
+                        // FileProvider content URI. No broad storage permission or
+                        // path sharing between the two packages is required.
+                        val uri = intent?.data?.toString()
+                            ?.takeIf { it.isNotBlank() }
+                            ?: intent?.getStringExtra("uri").orEmpty()
                         if (packageName.isBlank() || uri.isBlank()) {
                             mapOf("launched" to false, "message" to "APK URI or package name is missing.")
                         } else {
