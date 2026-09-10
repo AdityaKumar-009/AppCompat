@@ -10,7 +10,11 @@ android {
 
     defaultConfig {
         minSdk 24
-        targetSdk 33
+        // The helper is sideloaded from the signed AppCompat host, not Play-listed.
+        // Keeping its target at 28 preserves legacy framework semantics for the
+        // Binder/reflection compatibility engine while remaining installable on
+        // Android 14/15/16 (whose documented low-target install floor is below 28).
+        targetSdk 28
         versionCode 4
         versionName "0.4.0"
         multiDexEnabled true
