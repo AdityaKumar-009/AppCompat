@@ -1,0 +1,14 @@
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+build/
+android/.gradle/
+android/local.properties
+android/gradle/
+android/gradlew
+android/gradlew.bat
+third_party/NewBlackbox/
+*.iml
+.idea/
