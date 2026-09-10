@@ -4,26 +4,39 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
-import android.os.Process
+import android.provider.Settings
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "com.appcompat.runtime/bridge"
         private const val REQUEST_APK = 4401
+        private const val REQUEST_ENGINE = 4402
+        private const val REQUEST_UNKNOWN_SOURCES = 4403
         private const val PREFS = "appcompat_runtime"
         private const val PENDING_NATIVE_PACKAGE = "pending_native_package"
         private const val PENDING_NATIVE_STARTED_AT = "pending_native_started_at"
     }
 
+    private enum class EngineOperation { RUN, LAUNCH, REMOVE }
+
     private val worker = Executors.newSingleThreadExecutor()
     private var pendingPickerResult: MethodChannel.Result? = null
+    private var pendingEngineResult: MethodChannel.Result? = null
+    private var pendingEngineOperation: EngineOperation? = null
+    private var pendingEngineBits: Int = 0
+    private var pendingEnginePackage: String = ""
+    private var pendingEngineName: String = ""
+    private var pendingEngineApk: File? = null
+    private var waitingForUnknownSources = false
     private var lastReport: Map<String, Any?>? = null
     private var resumeCount = 0
 
@@ -36,23 +49,34 @@ class MainActivity : FlutterActivity() {
     private fun handleCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "selectAndAnalyze" -> selectAndAnalyze(result)
-            "engineStatus" -> result.success(
-                mapOf(
-                    "ready" to CompatRuntime.ready,
-                    "hostSdk" to android.os.Build.VERSION.SDK_INT,
-                    "hostAbis" to android.os.Build.SUPPORTED_ABIS.toList(),
-                    "runtimeBits" to if (Process.is64Bit()) 64 else 32,
-                    "smartRouting" to true
-                )
-            )
+            "engineStatus" -> {
+                val status = EngineBroker.status(this).toMutableMap()
+                status["ready"] = true
+                status["hostSdk"] = Build.VERSION.SDK_INT
+                status["hostAbis"] = Build.SUPPORTED_ABIS.toList()
+                status["smartRouting"] = true
+                result.success(status)
+            }
             "runVirtual" -> runSmart(call, result)
-            "listVirtualApps" -> background(result) { CompatRuntime.listApps() }
+            "listVirtualApps" -> result.success(EngineBroker.listRegistered(this))
             "launchVirtual" -> {
                 val packageName = call.argument<String>("packageName")
                 if (packageName.isNullOrBlank()) {
                     result.error("bad_arguments", "Package name is missing.", null)
                 } else {
-                    background(result) { CompatRuntime.launch(packageName) }
+                    val bits = EngineBroker.registeredBits(this, packageName)
+                    if (bits == null) {
+                        result.success(false)
+                    } else {
+                        beginEngineOperation(
+                            result = result,
+                            operation = EngineOperation.LAUNCH,
+                            bits = bits,
+                            packageName = packageName,
+                            appName = packageName,
+                            apk = null
+                        )
+                    }
                 }
             }
             "removeVirtual" -> {
@@ -60,9 +84,19 @@ class MainActivity : FlutterActivity() {
                 if (packageName.isNullOrBlank()) {
                     result.error("bad_arguments", "Package name is missing.", null)
                 } else {
-                    background(result) {
-                        CompatRuntime.remove(packageName)
-                        true
+                    val bits = EngineBroker.registeredBits(this, packageName)
+                    if (bits == null) {
+                        EngineBroker.unregister(this, packageName)
+                        result.success(null)
+                    } else {
+                        beginEngineOperation(
+                            result = result,
+                            operation = EngineOperation.REMOVE,
+                            bits = bits,
+                            packageName = packageName,
+                            appName = packageName,
+                            apk = null
+                        )
                     }
                 }
             }
@@ -72,10 +106,9 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * The Flutter UI historically calls this operation "runVirtual". It is now a
-     * smart router: if Android can safely execute the APK itself, native execution
-     * wins. The virtual engine is only used when the platform's target-SDK floor
-     * blocks normal installation and the guest ABI matches this process.
+     * The public UI keeps the historical method name `runVirtual`, but this is a
+     * progressive router. Real Android execution is used whenever possible; only
+     * APKs blocked by modern install policy fall through to an ABI-matched helper.
      */
     private fun runSmart(call: MethodCall, result: MethodChannel.Result) {
         val path = call.argument<String>("path")
@@ -87,45 +120,186 @@ class MainActivity : FlutterActivity() {
 
         val report = lastReport
         val isCurrentReport = report?.get("packageName") == packageName && report["path"] == path
-        val route = if (isCurrentReport) report?.get("route")?.toString() else null
+        if (!isCurrentReport) {
+            result.error("stale_report", "Choose the APK again so AppCompat can verify its execution route.", null)
+            return
+        }
 
-        if (route == "native") {
-            val uri = report?.get("uri")?.toString().orEmpty()
-            if (uri.isBlank()) {
-                result.error("native_uri_missing", "The original APK permission is no longer available. Choose the APK again.", null)
-                return
-            }
-            try {
-                openNativeInstaller(uri, packageName)
-                result.success(
-                    mapOf(
-                        "launched" to false,
-                        "nativeInstallStarted" to true,
-                        "packageName" to packageName,
-                        "message" to "Android's native installer was opened because it is the more compatible path for this APK. After installation, AppCompat will open the app automatically."
+        when (report?.get("route")?.toString()) {
+            "native" -> {
+                val uri = report["uri"]?.toString().orEmpty()
+                if (uri.isBlank()) {
+                    result.error("native_uri_missing", "The original APK permission is no longer available. Choose the APK again.", null)
+                    return
+                }
+                try {
+                    openNativeInstaller(uri, packageName)
+                    result.success(
+                        mapOf(
+                            "launched" to false,
+                            "nativeInstallStarted" to true,
+                            "packageName" to packageName,
+                            "message" to "Android's native installer was opened because it preserves more legacy system integration. After installation, AppCompat will try to open the app automatically."
+                        )
                     )
-                )
-            } catch (t: Throwable) {
-                result.error("installer_unavailable", "Android could not open its package installer.", t.message)
+                } catch (t: Throwable) {
+                    result.error("installer_unavailable", "Android could not open its package installer.", t.message)
+                }
             }
+            "virtual" -> {
+                val bitsFromReport = (report["preferredEngineBits"] as? Number)?.toInt() ?: 0
+                val bits = bitsFromReport.takeIf { it == 32 || it == 64 }
+                    ?: EngineBroker.chooseBits(report)
+                if (bits == null || !EngineBroker.engineSupported(bits)) {
+                    result.success(
+                        mapOf(
+                            "launched" to false,
+                            "packageName" to packageName,
+                            "message" to "This APK requires a CPU runtime that Android does not expose on this device."
+                        )
+                    )
+                    return
+                }
+                beginEngineOperation(
+                    result = result,
+                    operation = EngineOperation.RUN,
+                    bits = bits,
+                    packageName = packageName,
+                    appName = report["name"]?.toString().orEmpty(),
+                    apk = File(path)
+                )
+            }
+            else -> {
+                val message = (report?.get("issues") as? List<*>)
+                    ?.lastOrNull()
+                    ?.toString()
+                    ?: "This APK needs a platform, CPU or external capability that is unavailable on this device."
+                result.success(mapOf("launched" to false, "message" to message, "packageName" to packageName))
+            }
+        }
+    }
+
+    private fun beginEngineOperation(
+        result: MethodChannel.Result,
+        operation: EngineOperation,
+        bits: Int,
+        packageName: String,
+        appName: String,
+        apk: File?
+    ) {
+        if (pendingEngineResult != null) {
+            result.error("engine_busy", "Another compatibility operation is still in progress.", null)
+            return
+        }
+        if (apk != null && (!apk.isFile || apk.length() == 0L)) {
+            result.error("apk_missing", "The private APK copy is no longer available. Choose the APK again.", null)
             return
         }
 
-        if (route == "limited") {
-            val message = (report?.get("issues") as? List<*>)
-                ?.lastOrNull()
-                ?.toString()
-                ?: "This APK needs a CPU/runtime capability that this device cannot provide safely."
-            result.success(mapOf("launched" to false, "message" to message, "packageName" to packageName))
-            return
+        pendingEngineResult = result
+        pendingEngineOperation = operation
+        pendingEngineBits = bits
+        pendingEnginePackage = packageName
+        pendingEngineName = appName
+        pendingEngineApk = apk
+
+        // Android does not permit an ordinary application to silently install an
+        // ABI-specific helper. Ask once for the standard "install unknown apps"
+        // permission when required, then resume the pending operation automatically.
+        if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls() && !EngineBroker.isInstalled(this, bits)) {
+            try {
+                waitingForUnknownSources = true
+                startActivityForResult(
+                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")),
+                    REQUEST_UNKNOWN_SOURCES
+                )
+                return
+            } catch (t: Throwable) {
+                Log.w("AppCompat", "Could not open unknown-source settings", t)
+                // Fall through to PackageInstaller; some OEM installers can still
+                // present their own authorization UI.
+            }
         }
 
-        background(result) { CompatRuntime.installAndLaunch(path, packageName) }
+        provisionAndStartPendingEngine()
+    }
+
+    private fun provisionAndStartPendingEngine() {
+        val result = pendingEngineResult ?: return
+        val bits = pendingEngineBits
+        EngineBroker.ensureInstalled(this, bits) { success, message ->
+            runOnUiThread {
+                if (pendingEngineResult !== result) return@runOnUiThread
+                if (!success) {
+                    finishPendingEngineFailure(
+                        message ?: "Android did not allow the ${bits}-bit compatibility runtime to be installed."
+                    )
+                    return@runOnUiThread
+                }
+                startPendingEngineActivity()
+            }
+        }
+    }
+
+    private fun startPendingEngineActivity() {
+        val result = pendingEngineResult ?: return
+        val operation = pendingEngineOperation ?: run {
+            finishPendingEngineFailure("Compatibility operation state was lost.")
+            return
+        }
+        val action = when (operation) {
+            EngineOperation.RUN -> EngineBroker.ACTION_RUN
+            EngineOperation.LAUNCH -> EngineBroker.ACTION_LAUNCH
+            EngineOperation.REMOVE -> EngineBroker.ACTION_REMOVE
+        }
+
+        try {
+            EngineBroker.start(
+                activity = this,
+                bits = pendingEngineBits,
+                action = action,
+                packageName = pendingEnginePackage,
+                apkFile = pendingEngineApk,
+                requestCode = REQUEST_ENGINE
+            )
+        } catch (t: Throwable) {
+            Log.e("AppCompat", "Could not start compatibility helper", t)
+            if (pendingEngineResult === result) {
+                finishPendingEngineFailure(t.message ?: "The compatibility helper could not be started.")
+            }
+        }
+    }
+
+    private fun finishPendingEngineFailure(message: String) {
+        val result = pendingEngineResult ?: return
+        when (pendingEngineOperation) {
+            EngineOperation.LAUNCH -> result.success(false)
+            EngineOperation.REMOVE -> result.error("engine_failure", message, null)
+            else -> result.success(
+                mapOf(
+                    "launched" to false,
+                    "packageName" to pendingEnginePackage,
+                    "engineBits" to pendingEngineBits,
+                    "message" to message
+                )
+            )
+        }
+        clearPendingEngine()
+    }
+
+    private fun clearPendingEngine() {
+        pendingEngineResult = null
+        pendingEngineOperation = null
+        pendingEngineBits = 0
+        pendingEnginePackage = ""
+        pendingEngineName = ""
+        pendingEngineApk = null
+        waitingForUnknownSources = false
     }
 
     private fun selectAndAnalyze(result: MethodChannel.Result) {
-        if (pendingPickerResult != null) {
-            result.error("picker_busy", "The APK picker is already open.", null)
+        if (pendingPickerResult != null || pendingEngineResult != null) {
+            result.error("busy", "Finish the current compatibility operation first.", null)
             return
         }
         pendingPickerResult = result
@@ -148,8 +322,21 @@ class MainActivity : FlutterActivity() {
     @Deprecated("Deprecated in Android framework; retained for broad device compatibility")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_APK) return
+        when (requestCode) {
+            REQUEST_APK -> handleApkPickerResult(resultCode, data)
+            REQUEST_ENGINE -> handleEngineResult(resultCode, data)
+            REQUEST_UNKNOWN_SOURCES -> {
+                waitingForUnknownSources = false
+                if (Build.VERSION.SDK_INT < 26 || packageManager.canRequestPackageInstalls()) {
+                    provisionAndStartPendingEngine()
+                } else {
+                    finishPendingEngineFailure("Allow AppCompat to install its compatibility runtime, then try again.")
+                }
+            }
+        }
+    }
 
+    private fun handleApkPickerResult(resultCode: Int, data: Intent?) {
         val result = pendingPickerResult ?: return
         pendingPickerResult = null
         val uri = data?.data
@@ -163,7 +350,8 @@ class MainActivity : FlutterActivity() {
                 (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             contentResolver.takePersistableUriPermission(uri, flags and Intent.FLAG_GRANT_READ_URI_PERMISSION)
         } catch (_: Throwable) {
-            // Some providers grant only a transient URI. The analyzer immediately makes a private copy.
+            // Some document providers grant only a transient URI. ApkAnalyzer makes
+            // a private copy immediately, so virtual execution remains reliable.
         }
 
         worker.execute {
@@ -178,6 +366,51 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+    }
+
+    private fun handleEngineResult(resultCode: Int, data: Intent?) {
+        val result = pendingEngineResult ?: return
+        val operation = pendingEngineOperation
+        val extras = linkedMapOf<String, Any?>()
+        data?.extras?.keySet()?.forEach { key ->
+            @Suppress("DEPRECATION")
+            extras[key] = data.extras?.get(key)
+        }
+
+        val launched = extras["launched"] == true
+        val removed = extras["removed"] == true
+        val message = extras["message"]?.toString()
+
+        when (operation) {
+            EngineOperation.RUN -> {
+                if (launched) {
+                    EngineBroker.register(
+                        this,
+                        pendingEnginePackage,
+                        pendingEngineName.ifBlank { pendingEnginePackage },
+                        pendingEngineBits
+                    )
+                }
+                if (!extras.containsKey("launched")) extras["launched"] = resultCode == Activity.RESULT_OK
+                extras["packageName"] = pendingEnginePackage
+                extras["engineBits"] = pendingEngineBits
+                if (message == null && resultCode != Activity.RESULT_OK) {
+                    extras["message"] = "The compatibility runtime returned without a successful launch."
+                }
+                result.success(extras)
+            }
+            EngineOperation.LAUNCH -> result.success(launched || resultCode == Activity.RESULT_OK)
+            EngineOperation.REMOVE -> {
+                if (removed || resultCode == Activity.RESULT_OK) {
+                    EngineBroker.unregister(this, pendingEnginePackage)
+                    result.success(null)
+                } else {
+                    result.error("remove_failed", message ?: "The compatibility app could not be removed.", extras)
+                }
+            }
+            null -> result.error("engine_state_lost", "Compatibility operation state was lost.", null)
+        }
+        clearPendingEngine()
     }
 
     private fun installNormally(call: MethodCall, result: MethodChannel.Result) {
@@ -213,9 +446,7 @@ class MainActivity : FlutterActivity() {
     override fun onResume() {
         super.onResume()
         resumeCount++
-        // Do not do this on the first resume after Activity creation. On a later
-        // resume, we have just returned from Android's package installer.
-        if (resumeCount > 1) maybeOpenNewlyInstalledApp()
+        if (resumeCount > 1 && !waitingForUnknownSources) maybeOpenNewlyInstalledApp()
     }
 
     private fun maybeOpenNewlyInstalledApp() {
@@ -224,7 +455,7 @@ class MainActivity : FlutterActivity() {
         val startedAt = prefs.getLong(PENDING_NATIVE_STARTED_AT, 0L)
 
         val installed = try {
-            if (android.os.Build.VERSION.SDK_INT >= 33) {
+            if (Build.VERSION.SDK_INT >= 33) {
                 packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
             } else {
                 @Suppress("DEPRECATION")
@@ -236,9 +467,7 @@ class MainActivity : FlutterActivity() {
         }
 
         if (!installed) {
-            // Returning from the installer without a package means the user cancelled
-            // or Android rejected it. Clear the pending state so AppCompat never loops.
-            if (System.currentTimeMillis() - startedAt > 500L) {
+            if (System.currentTimeMillis() - startedAt > 700L) {
                 prefs.edit().remove(PENDING_NATIVE_PACKAGE).remove(PENDING_NATIVE_STARTED_AT).apply()
             }
             return
@@ -265,7 +494,7 @@ class MainActivity : FlutterActivity() {
             addCategory(category)
             setPackage(packageName)
         }
-        val matches = if (android.os.Build.VERSION.SDK_INT >= 33) {
+        val matches = if (Build.VERSION.SDK_INT >= 33) {
             packageManager.queryIntentActivities(query, PackageManager.ResolveInfoFlags.of(0))
         } else {
             @Suppress("DEPRECATION")
@@ -280,22 +509,12 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun background(result: MethodChannel.Result, block: () -> Any?) {
-        worker.execute {
-            try {
-                val value = block()
-                runOnUiThread { result.success(value) }
-            } catch (t: Throwable) {
-                Log.e("AppCompat", "Native operation failed", t)
-                runOnUiThread {
-                    result.error("native_failure", t.message ?: t.javaClass.simpleName, null)
-                }
-            }
-        }
-    }
-
     override fun onDestroy() {
         pendingPickerResult = null
+        if (isFinishing) {
+            pendingEngineResult = null
+        }
+        worker.shutdownNow()
         super.onDestroy()
     }
 }
