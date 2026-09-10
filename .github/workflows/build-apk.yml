@@ -69,52 +69,38 @@ jobs:
         working-directory: android
         run: ./gradlew :app:tasks --no-daemon --stacktrace
 
-      - name: Build 32-bit and 64-bit compatibility runtimes
-        run: flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi --verbose
+      - name: Build one smart multi-ABI APK
+        run: flutter build apk --release --target-platform android-arm,android-arm64 --verbose
 
-      - name: Verify runtime ABI isolation
+      - name: Verify smart APK
         shell: bash
         run: |
           set -euo pipefail
-          ARM32="build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk"
-          ARM64="build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
-          test -s "$ARM32"
-          test -s "$ARM64"
+          APK="build/app/outputs/flutter-apk/app-release.apk"
+          test -s "$APK"
+          zipinfo -1 "$APK" > /tmp/appcompat-files.txt
 
-          zipinfo -1 "$ARM32" > /tmp/appcompat-arm32-files.txt
-          zipinfo -1 "$ARM64" > /tmp/appcompat-arm64-files.txt
+          # One downloadable APK must carry both Flutter and compatibility native code.
+          grep -q '^lib/armeabi-v7a/libflutter.so$' /tmp/appcompat-files.txt
+          grep -q '^lib/arm64-v8a/libflutter.so$' /tmp/appcompat-files.txt
+          grep -q '^lib/armeabi-v7a/libblackbox.so$' /tmp/appcompat-files.txt
+          grep -q '^lib/arm64-v8a/libblackbox.so$' /tmp/appcompat-files.txt
 
-          grep -q '^lib/armeabi-v7a/libflutter.so$' /tmp/appcompat-arm32-files.txt
-          grep -q '^lib/armeabi-v7a/libblackbox.so$' /tmp/appcompat-arm32-files.txt
-          if grep -q '^lib/arm64-v8a/' /tmp/appcompat-arm32-files.txt; then
-            echo "32-bit runtime unexpectedly contains arm64 native libraries" >&2
-            exit 1
-          fi
+          # The manifest must prefer a 32-bit process on dual-ABI devices so genuinely
+          # old 32-bit apps can use the virtual runtime, while 64-bit-only devices can
+          # still fall back to their available ABI.
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump xmltree "$APK" --file AndroidManifest.xml > /tmp/manifest.txt
+          grep -q 'multiArch.*0xffffffff' /tmp/manifest.txt || grep -q 'multiArch.*true' /tmp/manifest.txt
+          grep -q 'use32bitAbi.*0xffffffff' /tmp/manifest.txt || grep -q 'use32bitAbi.*true' /tmp/manifest.txt
 
-          grep -q '^lib/arm64-v8a/libflutter.so$' /tmp/appcompat-arm64-files.txt
-          grep -q '^lib/arm64-v8a/libblackbox.so$' /tmp/appcompat-arm64-files.txt
-          if grep -q '^lib/armeabi-v7a/' /tmp/appcompat-arm64-files.txt; then
-            echo "64-bit runtime unexpectedly contains ARM32 native libraries" >&2
-            exit 1
-          fi
+          cp "$APK" AppCompat-smart.apk
+          ls -lh AppCompat-smart.apk
+          sha256sum AppCompat-smart.apk
 
-          cp "$ARM32" AppCompat-32bit.apk
-          cp "$ARM64" AppCompat-64bit.apk
-          ls -lh AppCompat-32bit.apk AppCompat-64bit.apk
-          sha256sum AppCompat-32bit.apk AppCompat-64bit.apk
-
-      - name: Upload 32-bit APK
+      - name: Upload smart APK
         uses: actions/upload-artifact@v4
         with:
-          name: AppCompat-32bit-apk
-          path: AppCompat-32bit.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload 64-bit APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: AppCompat-64bit-apk
-          path: AppCompat-64bit.apk
+          name: AppCompat-smart-apk
+          path: AppCompat-smart.apk
           if-no-files-found: error
           retention-days: 14
