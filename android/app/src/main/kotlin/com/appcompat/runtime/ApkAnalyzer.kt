@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Process
 import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipFile
@@ -62,7 +63,18 @@ object ApkAnalyzer {
         val nativeCompatible = abis.isEmpty() || abis.any { it in hostAbis }
         val has32 = abis.any { it == "armeabi" || it == "armeabi-v7a" || it == "x86" }
         val has64 = abis.any { it == "arm64-v8a" || it == "x86_64" }
-        val strict64BitBlock = has32 && !has64 && Build.SUPPORTED_32_BIT_ABIS.isEmpty()
+        val runtimeIs64Bit = Process.is64Bit()
+
+        // A BlackBox guest executes inside a host process and therefore must have the
+        // same native bitness as that process. A device may expose both 32- and 64-bit
+        // ABIs while this particular AppCompat build is running as only one of them.
+        val runtimeBitnessMismatch = when {
+            abis.isEmpty() || !nativeCompatible -> false
+            runtimeIs64Bit && has32 && !has64 -> true
+            !runtimeIs64Bit && has64 && !has32 -> true
+            else -> false
+        }
+        val deviceHasNo32BitRuntime = has32 && !has64 && Build.SUPPORTED_32_BIT_ABIS.isEmpty()
 
         // Android 14 blocks target < 23. Android 15+ raises that floor to target < 24.
         val lowTargetBlocked = when {
@@ -81,10 +93,15 @@ object ApkAnalyzer {
         if (lowTargetBlocked) {
             issues += "Modern Android blocks normal installation at this target SDK; the compatibility runtime avoids the normal package-install path."
         }
-        if (strict64BitBlock) {
-            issues += "This APK contains only 32-bit native code, while this device exposes no 32-bit Android runtime. An ARM32 binary translator is still required."
+        if (deviceHasNo32BitRuntime) {
+            issues += "This APK contains only 32-bit native code, while this device exposes no 32-bit Android runtime. A system-level 32-bit translator or emulator is required on this device."
         } else if (!nativeCompatible) {
             issues += "The APK native libraries do not match any CPU ABI exposed by this device."
+        } else if (runtimeBitnessMismatch) {
+            val guestBits = if (has32 && !has64) "32-bit" else "64-bit"
+            val runtimeBits = if (runtimeIs64Bit) "64-bit" else "32-bit"
+            val requiredBuild = if (has32 && !has64) "32-bit" else "64-bit"
+            issues += "This APK is $guestBits, but the active AppCompat compatibility engine is $runtimeBits. Use the AppCompat $requiredBuild build so the virtual process has matching native bitness."
         }
         if (legacyStorage) {
             issues += "The app uses legacy external-storage behavior. AppCompat will isolate its filesystem, but some hard-coded paths may still fail."
@@ -101,15 +118,16 @@ object ApkAnalyzer {
             issues += "The app depends on legacy account APIs; account-backed sign-in may require services that no longer exist."
         }
 
+        val abiCompatible = nativeCompatible && !deviceHasNo32BitRuntime && !runtimeBitnessMismatch
         val route = when {
-            minSdkBlock || strict64BitBlock || !nativeCompatible -> "limited"
+            minSdkBlock || !abiCompatible -> "limited"
             lowTargetBlocked || targetSdk <= 28 -> "virtual"
             else -> "native"
         }
 
         val confidence = when {
             route == "limited" -> "Limited — unresolved CPU or platform requirement"
-            !abis.isEmpty() -> "Medium — native code can introduce device-specific failures"
+            abis.isNotEmpty() -> "Medium — native code can introduce device-specific failures"
             targetSdk <= 28 -> "High for self-contained Java/Kotlin apps"
             else -> "High — normal Android execution is also available"
         }
@@ -126,9 +144,10 @@ object ApkAnalyzer {
             "sizeBytes" to apk.length(),
             "abis" to abis.toList(),
             "hostAbis" to Build.SUPPORTED_ABIS.toList(),
+            "runtimeBits" to if (runtimeIs64Bit) 64 else 32,
             "dexCount" to dexCount,
             "hasNativeCode" to abis.isNotEmpty(),
-            "abiCompatible" to (nativeCompatible && !strict64BitBlock),
+            "abiCompatible" to abiCompatible,
             "lowTargetBlocked" to lowTargetBlocked,
             "route" to route,
             "confidence" to confidence,
