@@ -33,9 +33,15 @@ object EngineBroker {
 
     private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32"
     private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64"
-    private const val ENGINE_VERSION = 4L
     private const val REGISTRY_PREFS = "appcompat_virtual_registry"
     private const val REGISTRY_JSON = "apps"
+
+    // The embedded helper APKs intentionally use the same versionCode as the host.
+    // Derive the required version from BuildConfig instead of maintaining a second
+    // hard-coded integer. The old hard-coded value allowed a v0.4 helper to be
+    // reused by the v0.5 host, which meant runtime fixes in the new APK never ran.
+    private val requiredEngineVersion: Long
+        get() = BuildConfig.VERSION_CODE.toLong()
 
     fun packageFor(bits: Int): String = if (bits == 32) ENGINE32_PACKAGE else ENGINE64_PACKAGE
 
@@ -71,6 +77,9 @@ object EngineBroker {
         "engine64Supported" to engineSupported(64),
         "engine32Installed" to isInstalled(context, 32),
         "engine64Installed" to isInstalled(context, 64),
+        "engine32Version" to installedVersion(context, 32),
+        "engine64Version" to installedVersion(context, 64),
+        "requiredEngineVersion" to requiredEngineVersion,
         "singleApkRouting" to true
     )
 
@@ -153,7 +162,11 @@ object EngineBroker {
     }
 
     @Suppress("DEPRECATION")
-    fun isInstalled(context: Context, bits: Int): Boolean {
+    fun isInstalled(context: Context, bits: Int): Boolean =
+        installedVersion(context, bits) == requiredEngineVersion
+
+    @Suppress("DEPRECATION")
+    private fun installedVersion(context: Context, bits: Int): Long? {
         return try {
             val info = if (Build.VERSION.SDK_INT >= 33) {
                 context.packageManager.getPackageInfo(
@@ -163,10 +176,9 @@ object EngineBroker {
             } else {
                 context.packageManager.getPackageInfo(packageFor(bits), 0)
             }
-            val version = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
-            version >= ENGINE_VERSION
+            if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
         } catch (_: Throwable) {
-            false
+            null
         }
     }
 
