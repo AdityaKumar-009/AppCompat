@@ -20,8 +20,7 @@ import java.io.File
  * Android chooses one primary ABI for an installed package, so a 64-bit host
  * process cannot simply dlopen a 32-bit guest library (or vice versa). AppCompat
  * keeps the visible product as one APK, then provisions a hidden, signature-
- * protected runtime package for the required bitness on first use. This is the
- * same architectural boundary Android's dual zygotes impose at process level.
+ * protected runtime package for the required bitness on first use.
  */
 object EngineBroker {
     const val ENGINE_PERMISSION = "com.appcompat.runtime.permission.ENGINE"
@@ -31,17 +30,13 @@ object EngineBroker {
     const val ACTION_LAST_CRASH = "com.appcompat.runtime.engine.LAST_CRASH"
     const val BRIDGE_CLASS = "com.appcompat.engine.EngineBridgeActivity"
 
-    // Keep helper package IDs versioned. A new namespace forces Android to install
-    // the runtime carrying the matching framework-translation code even when an
-    // older helper was signed by a different ephemeral CI certificate.
-    private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v7"
-    private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v7"
+    // v8 contains the modern runtime-permission bridge. Versioned helper package
+    // IDs prevent Android from reusing a stale helper signed by an older CI build.
+    private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v8"
+    private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v8"
     private const val REGISTRY_PREFS = "appcompat_virtual_registry"
     private const val REGISTRY_JSON = "apps"
 
-    // The embedded helper APKs intentionally use the same versionCode as the host.
-    // Derive the required version from BuildConfig instead of maintaining a second
-    // hard-coded integer so runtime fixes can never silently reuse a stale helper.
     private val requiredEngineVersion: Long
         get() = BuildConfig.VERSION_CODE.toLong()
 
@@ -58,8 +53,6 @@ object EngineBroker {
         val has32 = abis.any { it == "armeabi" || it == "armeabi-v7a" || it == "x86" }
         val has64 = abis.any { it == "arm64-v8a" || it == "x86_64" }
 
-        // Pure-Dex APKs can run in either runtime. Prefer the device's primary
-        // bitness so ART/framework behavior is closest to a normal installation.
         if (abis.isEmpty()) {
             return when {
                 Build.SUPPORTED_64_BIT_ABIS.isNotEmpty() -> 64
@@ -68,7 +61,6 @@ object EngineBroker {
             }
         }
 
-        // For a fat APK prefer 64-bit, matching modern Android package selection.
         if (has64 && Build.SUPPORTED_64_BIT_ABIS.isNotEmpty()) return 64
         if (has32 && Build.SUPPORTED_32_BIT_ABIS.isNotEmpty()) return 32
         return null
@@ -184,18 +176,35 @@ object EngineBroker {
         }
     }
 
-    fun register(context: Context, packageName: String, name: String, bits: Int) {
+    /**
+     * The library belongs to the visible AppCompat host, not to a particular helper
+     * version. Keep the source APK path so a newer helper can transparently rebuild
+     * its virtual install instead of making the user's library disappear.
+     */
+    fun register(
+        context: Context,
+        packageName: String,
+        name: String,
+        bits: Int,
+        apkPath: String? = null
+    ) {
         val apps = readRegistry(context)
+        var oldPath: String? = null
         val filtered = JSONArray()
         for (i in 0 until apps.length()) {
             val item = apps.optJSONObject(i) ?: continue
-            if (item.optString("packageName") != packageName) filtered.put(item)
+            if (item.optString("packageName") == packageName) {
+                oldPath = item.optString("apkPath").takeIf { it.isNotBlank() }
+            } else {
+                filtered.put(item)
+            }
         }
         filtered.put(
             JSONObject()
                 .put("packageName", packageName)
                 .put("name", name.ifBlank { packageName })
                 .put("engineBits", bits)
+                .put("apkPath", apkPath?.takeIf { it.isNotBlank() } ?: oldPath ?: "")
         )
         writeRegistry(context, filtered)
     }
@@ -210,16 +219,30 @@ object EngineBroker {
         writeRegistry(context, filtered)
     }
 
-    fun registeredBits(context: Context, packageName: String): Int? {
+    private fun registeredObject(context: Context, packageName: String): JSONObject? {
         val apps = readRegistry(context)
         for (i in 0 until apps.length()) {
             val item = apps.optJSONObject(i) ?: continue
-            if (item.optString("packageName") == packageName) {
-                return item.optInt("engineBits").takeIf { it == 32 || it == 64 }
-            }
+            if (item.optString("packageName") == packageName) return item
         }
         return null
     }
+
+    fun registeredBits(context: Context, packageName: String): Int? =
+        registeredObject(context, packageName)
+            ?.optInt("engineBits")
+            ?.takeIf { it == 32 || it == 64 }
+
+    fun registeredApkPath(context: Context, packageName: String): String? =
+        registeredObject(context, packageName)
+            ?.optString("apkPath")
+            ?.takeIf { it.isNotBlank() }
+
+    fun registeredName(context: Context, packageName: String): String =
+        registeredObject(context, packageName)
+            ?.optString("name")
+            ?.takeIf { it.isNotBlank() }
+            ?: packageName
 
     fun listRegistered(context: Context): List<Map<String, Any?>> {
         val apps = readRegistry(context)
@@ -227,11 +250,13 @@ object EngineBroker {
         for (i in 0 until apps.length()) {
             val item = apps.optJSONObject(i) ?: continue
             val bits = item.optInt("engineBits")
-            if (!isInstalled(context, bits)) continue
+            if (bits != 32 && bits != 64) continue
             out += linkedMapOf(
                 "packageName" to item.optString("packageName"),
                 "name" to item.optString("name"),
-                "engineBits" to bits
+                "engineBits" to bits,
+                "runtimeInstalled" to isInstalled(context, bits),
+                "hasSourceApk" to item.optString("apkPath").let { it.isNotBlank() && File(it).isFile }
             )
         }
         return out
