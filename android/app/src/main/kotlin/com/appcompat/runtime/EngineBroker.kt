@@ -23,11 +23,11 @@ object EngineBroker {
     const val ACTION_LAST_CRASH = "com.appcompat.runtime.engine.LAST_CRASH"
     const val BRIDGE_CLASS = "com.appcompat.engine.EngineBridgeActivity"
 
-    // v9 contains special-app-access translation and a real notification listener
-    // proxy. Versioned helper package IDs prevent Android from reusing a stale
-    // runtime that cannot appear in modern Settings permission pages.
-    private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v9"
-    private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v9"
+    // v10 fixes legacy startActivityForResult() special-access launches by routing
+    // real Settings as a no-result external task, plus service-attribution bridges.
+    // New package IDs force replacement of any stale v9 helper already on-device.
+    private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v10"
+    private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v10"
     private const val REGISTRY_PREFS = "appcompat_virtual_registry"
     private const val REGISTRY_JSON = "apps"
 
