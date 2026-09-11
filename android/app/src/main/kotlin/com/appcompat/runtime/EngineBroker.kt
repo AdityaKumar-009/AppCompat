@@ -23,11 +23,14 @@ object EngineBroker {
     const val ACTION_LAST_CRASH = "com.appcompat.runtime.engine.LAST_CRASH"
     const val BRIDGE_CLASS = "com.appcompat.engine.EngineBridgeActivity"
 
-    // v10 fixes legacy startActivityForResult() special-access launches by routing
-    // real Settings as a no-result external task, plus service-attribution bridges.
-    // New package IDs force replacement of any stale v9 helper already on-device.
-    private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v10"
-    private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v10"
+    // v11 changes the real helper's Android compatibility identity to API 25.
+    // Android system_server therefore applies pre-Oreo target-gated behavior where
+    // it still exists, while AppCompat translates APIs that modern Android removed.
+    // Versioned package IDs guarantee an already-installed v10 helper cannot leak
+    // its API-28 behavior into a newly launched legacy guest.
+    private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v11"
+    private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v11"
+    private const val COMPAT_PROFILE_TARGET_SDK = 25
     private const val REGISTRY_PREFS = "appcompat_virtual_registry"
     private const val REGISTRY_JSON = "apps"
 
@@ -67,6 +70,7 @@ object EngineBroker {
         "engine32Version" to installedVersion(context, 32),
         "engine64Version" to installedVersion(context, 64),
         "requiredEngineVersion" to requiredEngineVersion,
+        "compatProfileTargetSdk" to COMPAT_PROFILE_TARGET_SDK,
         "singleApkRouting" to true
     )
 
@@ -227,9 +231,8 @@ object EngineBroker {
             ?.takeIf { it == 32 || it == 64 }
 
     /**
-     * v0.7 and earlier did not store apkPath in the registry. Recover those entries
-     * by matching the package name against the private imported APK cache. Nothing
-     * leaves the app sandbox and no external-storage scan is performed.
+     * Older AppCompat builds did not store apkPath in the registry. Recover those
+     * entries by matching the package name against the private imported APK cache.
      */
     fun registeredApkPath(context: Context, packageName: String): String? {
         val direct = registeredObject(context, packageName)
