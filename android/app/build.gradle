@@ -13,15 +13,13 @@ android {
         applicationId "com.appcompat.runtime"
         minSdk 24
         targetSdk 36
-        versionCode 7
-        versionName "0.7.0"
+        versionCode 8
+        versionName "0.8.0"
         multiDexEnabled true
     }
 
     // EngineBroker reads VERSION_CODE from the generated BuildConfig so the
     // embedded helper APK contract always tracks the host application version.
-    // AGP 8+ does not guarantee BuildConfig generation unless it is explicitly
-    // enabled for the module.
     buildFeatures {
         buildConfig true
     }
@@ -66,8 +64,6 @@ flutter {
 }
 
 dependencies {
-    // The visible Flutter host is deliberately UI-only. Guest code runs in a
-    // separately ABI-selected runtime process/package provisioned from assets.
     implementation "androidx.core:core-ktx:1.17.0"
     implementation "androidx.multidex:multidex:2.0.1"
 }
