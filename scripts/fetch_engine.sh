@@ -32,6 +32,11 @@ python3 "$ROOT/scripts/patch_system_component_translation.py" "$DEST"
 python3 "$ROOT/scripts/patch_guest_sdk_identity.py" "$DEST"
 python3 "$ROOT/scripts/patch_guest_sdk_identity_hardening.py" "$DEST"
 python3 "$ROOT/scripts/patch_guest_sdk_postparse.py" "$DEST"
+# v13: raw equal-length string replacement is not DEX-safe because identifier tables
+# are sorted. Replace that implementation with a structural dexlib2 rewrite and then
+# run compile/deep-validation hardening before any Android compilation begins.
+python3 "$ROOT/scripts/patch_guest_sdk_structural.py" "$DEST"
+python3 "$ROOT/scripts/patch_guest_sdk_structural_hardening.py" "$DEST"
 python3 "$ROOT/scripts/patch_legacy_window_translation.py" "$DEST"
 python3 "$ROOT/scripts/patch_sdk_gate_calls.py" "$DEST"
 
