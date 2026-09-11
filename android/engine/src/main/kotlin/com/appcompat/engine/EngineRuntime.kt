@@ -1,12 +1,14 @@
 package com.appcompat.engine
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Process
 import android.util.Log
 import org.json.JSONObject
 import top.niunaijun.blackbox.BlackBoxCore
 import top.niunaijun.blackbox.app.configuration.ClientConfiguration
+import top.niunaijun.blackbox.utils.compat.LegacyPermissionCompat
 import java.io.File
 import java.io.FileOutputStream
 
@@ -62,7 +64,12 @@ object EngineRuntime {
         }
     }
 
-    fun installAndLaunch(context: Context, uriString: String, expectedPackage: String): Map<String, Any?> {
+    /**
+     * Performs only the virtual package installation. Permission prompts and guest
+     * launch are deliberately separate because Android runtime-permission dialogs
+     * must be driven by a real Activity on the helper package's UID.
+     */
+    fun install(context: Context, uriString: String, expectedPackage: String): Map<String, Any?> {
         if (!ready) {
             return failure("The ${BuildConfig.ENGINE_BITS}-bit compatibility engine is not ready.", expectedPackage)
         }
@@ -79,20 +86,55 @@ object EngineRuntime {
                 if (!install.packageName.isNullOrBlank()) packageName = install.packageName
             }
 
-            launchWithRecovery(packageName, freshImport = true)
+            linkedMapOf(
+                "installed" to true,
+                "packageName" to packageName,
+                "engineBits" to BuildConfig.ENGINE_BITS,
+                "compatibilityCode" to "INSTALLED",
+                "message" to "Installed in the compatibility runtime."
+            )
         } catch (t: Throwable) {
-            Log.e(TAG, "Virtual install/launch failed", t)
+            Log.e(TAG, "Virtual install failed", t)
             failure(t.message ?: t.javaClass.simpleName, expectedPackage)
         }
     }
 
+    /** Permissions Android must grant to the real helper UID for this virtual app. */
+    fun requiredHostRuntimePermissions(packageName: String): List<String> {
+        if (!ready || packageName.isBlank()) return emptyList()
+        return try {
+            LegacyPermissionCompat.requiredHostRuntimePermissions(packageName, USER_ID).toList()
+        } catch (t: Throwable) {
+            Log.w(TAG, "Could not calculate permission preflight for $packageName", t)
+            emptyList()
+        }
+    }
+
+    fun installAndLaunch(context: Context, uriString: String, expectedPackage: String): Map<String, Any?> {
+        val installed = install(context, uriString, expectedPackage)
+        if (installed["installed"] != true) return installed
+        val packageName = installed["packageName"]?.toString().orEmpty().ifBlank { expectedPackage }
+        return launchInstalled(packageName, freshImport = true)
+    }
+
     fun launch(packageName: String): Map<String, Any?> {
         if (!ready) return failure("Compatibility engine is not ready.", packageName)
+        return launchInstalled(packageName, freshImport = false)
+    }
+
+    fun launchInstalled(packageName: String, freshImport: Boolean): Map<String, Any?> {
+        if (!ready) return failure("Compatibility engine is not ready.", packageName)
         return try {
-            launchWithRecovery(packageName, freshImport = false)
+            val result = launchWithRecovery(packageName, freshImport).toMutableMap()
+            // Once a package has reached this path it exists in the virtual package
+            // manager even if its welcome/onboarding Activity later crashes.
+            result["installed"] = BlackBoxCore.get().isInstalled(packageName, USER_ID)
+            result
         } catch (t: Throwable) {
             Log.e(TAG, "Launch failed for $packageName", t)
-            failure(t.message ?: t.javaClass.simpleName, packageName)
+            failure(t.message ?: t.javaClass.simpleName, packageName).toMutableMap().apply {
+                put("installed", runCatching { BlackBoxCore.get().isInstalled(packageName, USER_ID) }.getOrDefault(false))
+            }
         }
     }
 
@@ -135,7 +177,10 @@ object EngineRuntime {
         }
 
         val firstStartedAt = System.currentTimeMillis()
-        Thread.sleep(if (freshImport) 1500 else 1100)
+        // Permission and first-run SDK initializers often run shortly after the first
+        // frame. Keep this window long enough to catch those deterministic crashes
+        // without blocking normal interaction for an excessive period.
+        Thread.sleep(if (freshImport) 2200 else 1500)
         var crash = recentCrash(context, packageName, firstStartedAt)
 
         if (crash != null) {
@@ -147,7 +192,7 @@ object EngineRuntime {
             val retryStartedAt = System.currentTimeMillis()
             launched = core.launchApk(packageName, USER_ID)
             if (launched) {
-                Thread.sleep(1250)
+                Thread.sleep(1700)
                 crash = recentCrash(context, packageName, retryStartedAt)
             }
         }
@@ -302,6 +347,14 @@ object EngineRuntime {
             append(crash.optString("stack"))
         }
         return when {
+            haystack.contains("Permission Denial", ignoreCase = true) ||
+                haystack.contains("requires android.permission", ignoreCase = true) ||
+                haystack.contains("not allowed to access", ignoreCase = true) -> "PERMISSION_TRANSLATION"
+            haystack.contains("ClassCastException", ignoreCase = true) ||
+                haystack.contains("BadParcelableException", ignoreCase = true) ||
+                haystack.contains("NoSuchMethodError", ignoreCase = true) ||
+                haystack.contains("AbstractMethodError", ignoreCase = true) ||
+                haystack.contains("IncompatibleClassChangeError", ignoreCase = true) -> "FRAMEWORK_TRANSLATION"
             haystack.contains("Unable to makeApplication", ignoreCase = true) ||
                 haystack.contains("makeApplication", ignoreCase = true) &&
                 haystack.contains("ClassCastException", ignoreCase = true) -> "APPLICATION_BOOTSTRAP"
@@ -322,6 +375,8 @@ object EngineRuntime {
             else -> "No deeper cause was reported."
         }
         return when (code) {
+            "PERMISSION_TRANSLATION" -> "The app reached a permission-gated Android API during onboarding. AppCompat translated the request, but Android still denied the required capability. Root cause: $detail"
+            "FRAMEWORK_TRANSLATION" -> "The app hit a framework signature/type mismatch during onboarding. Root cause: $detail"
             "APPLICATION_BOOTSTRAP" -> "Application bootstrap still failed after AppCompat's recovery ladder. Root cause: $detail"
             "NATIVE_LIBRARY" -> "The app reached native-code loading but a required library could not be loaded. Root cause: $detail"
             "MISSING_CLASS" -> "The app expects a framework/library class that is unavailable in this runtime. Root cause: $detail"
@@ -333,6 +388,7 @@ object EngineRuntime {
 
     private fun failure(message: String, packageName: String): Map<String, Any?> = linkedMapOf(
         "launched" to false,
+        "installed" to false,
         "packageName" to packageName,
         "engineBits" to BuildConfig.ENGINE_BITS,
         "compatibilityCode" to "ENGINE_FAILURE",
