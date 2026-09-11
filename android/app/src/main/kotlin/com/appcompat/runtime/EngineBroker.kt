@@ -23,13 +23,12 @@ object EngineBroker {
     const val ACTION_LAST_CRASH = "com.appcompat.runtime.engine.LAST_CRASH"
     const val BRIDGE_CLASS = "com.appcompat.engine.EngineBridgeActivity"
 
-    // v11 changes the real helper's Android compatibility identity to API 25.
-    // Android system_server therefore applies pre-Oreo target-gated behavior where
-    // it still exists, while AppCompat translates APIs that modern Android removed.
-    // Versioned package IDs guarantee an already-installed v10 helper cannot leak
-    // its API-28 behavior into a newly launched legacy guest.
-    private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v11"
-    private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v11"
+    // v12 keeps the real helper on the API-25 compatibility target and adds a
+    // guest-only Build.VERSION API-25 representation plus real Accessibility and
+    // DeviceAdmin proxy components. New package IDs force Android to install the
+    // new system-visible component set instead of reusing a v11 helper.
+    private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v12"
+    private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v12"
     private const val COMPAT_PROFILE_TARGET_SDK = 25
     private const val REGISTRY_PREFS = "appcompat_virtual_registry"
     private const val REGISTRY_JSON = "apps"
