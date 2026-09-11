@@ -110,7 +110,7 @@ jobs:
           grep -q 'permissionsDenied' "$BRIDGE"
           grep -q 'requiredHostRuntimePermissions' "$RUNTIME"
           grep -q 'val installed = extras\["installed"\] == true' "$HOST"
-          grep -q 'if (launched || installed)' "$HOST"
+          grep -q 'registerPendingGuestIfInstalled(launched, installed)' "$HOST"
           grep -q 'pendingEngineApk?.absolutePath' "$HOST"
           echo "Permission preflight and durable library registration verified"
 
