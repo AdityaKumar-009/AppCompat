@@ -368,10 +368,12 @@ def patch_package_manager(root: Path) -> None:
             
             
             if (isAudioPermission(permission)) {'''
-    # Same prefix exists in checkPermission and checkSelfPermission.
+    # The prefix occurs in checkPermission, checkSelfPermission and
+    # shouldShowRequestPermissionRationale. Translate the first two here;
+    # rationale is deliberately patched immediately below.
     count = text.count(marker)
-    if count != 2:
-        raise SystemExit(f"[permission-translation] expected two permission-check prefixes, found {count}")
+    if count != 3:
+        raise SystemExit(f"[permission-translation] expected three permission prefixes, found {count}")
     text = text.replace(marker, replacement, 2)
     print("[permission-translation] package/self permission checks: applied")
 
