@@ -28,6 +28,21 @@ class NotificationAccessProxyService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         dispatch(LegacySpecialAccessCompat.ACTION_NOTIFICATION_LISTENER_CONNECTED, null)
+
+        // Legacy listeners commonly call getActiveNotifications() from their own
+        // onListenerConnected(). Their virtual service is not the Binder endpoint
+        // Android registered, so proactively replay the real proxy's current set.
+        // This also gives apps installed after notifications were already present a
+        // coherent initial state rather than waiting for the next notification.
+        val existing = try {
+            activeNotifications?.toList().orEmpty()
+        } catch (t: Throwable) {
+            Log.w(TAG, "Unable to read active notifications for initial replay", t)
+            emptyList()
+        }
+        for (notification in existing) {
+            dispatch(LegacySpecialAccessCompat.ACTION_NOTIFICATION_POSTED, notification)
+        }
     }
 
     override fun onListenerDisconnected() {
