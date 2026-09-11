@@ -55,7 +55,7 @@
 
     <application
         android:name=".EngineApplication"
-        android:label="AppCompat Legacy Runtime v11"
+        android:label="AppCompat Legacy Runtime v12"
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:extractNativeLibs="true"
@@ -72,15 +72,47 @@
 
         <!-- Android Settings can only grant notification access to a real installed
              NotificationListenerService. This service owns that system grant and
-             forwards callbacks to the opted-in virtual guest listener service. -->
+             forwards callbacks to opted-in virtual guest listener services. -->
         <service
             android:name=".NotificationAccessProxyService"
-            android:label="AppCompat Legacy Runtime v11 notification access"
+            android:label="AppCompat Runtime v12 notification access"
             android:exported="false"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <!-- Accessibility is also component-bound. The user explicitly enables this
+             real service in Android Settings; callbacks are then translated to the
+             virtual service identity that the imported app declared. -->
+        <service
+            android:name=".LegacyAccessibilityProxyService"
+            android:label="AppCompat Runtime v12 accessibility bridge"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/appcompat_accessibility_service" />
+        </service>
+
+        <!-- Device Administrator activation likewise requires a real receiver.
+             The proxy requests only force-lock, the capability legacy Floatify uses.
+             Android's own confirmation UI remains mandatory. -->
+        <receiver
+            android:name=".LegacyDeviceAdminReceiver"
+            android:label="AppCompat Runtime v12 device administrator"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/appcompat_device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
