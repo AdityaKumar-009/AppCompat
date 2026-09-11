@@ -11,12 +11,11 @@ android {
     defaultConfig {
         minSdk 24
         // The helper is sideloaded from the signed AppCompat host, not Play-listed.
-        // Keeping its target at 28 preserves legacy framework semantics for the
-        // Binder/reflection compatibility engine while remaining installable on
-        // Android 14/15/16 (whose documented low-target install floor is below 28).
+        // Keeping its target at 28 preserves legacy framework semantics while the
+        // permission bridge maps dangerous permissions onto the helper's real UID.
         targetSdk 28
-        versionCode 7
-        versionName "0.7.0"
+        versionCode 8
+        versionName "0.8.0"
         multiDexEnabled true
     }
 
@@ -24,7 +23,7 @@ android {
     productFlavors {
         arm32 {
             dimension "runtime"
-            applicationId "com.appcompat.runtime.engine32.v7"
+            applicationId "com.appcompat.runtime.engine32.v8"
             ndk {
                 abiFilters "armeabi-v7a"
             }
@@ -32,7 +31,7 @@ android {
         }
         arm64 {
             dimension "runtime"
-            applicationId "com.appcompat.runtime.engine64.v7"
+            applicationId "com.appcompat.runtime.engine64.v8"
             ndk {
                 abiFilters "arm64-v8a"
             }
@@ -66,10 +65,6 @@ android {
         }
     }
 
-    // targetSdk 28 is an intentional runtime-compatibility property of these
-    // private helper APKs. They are embedded in AppCompat and provisioned locally;
-    // they are not the Play-distributed user-facing application. Keep every other
-    // release lint check fatal and suppress only the Play target-SDK policy check.
     lint {
         disable += ["ExpiredTargetSdkVersion"]
         abortOnError true
@@ -82,7 +77,6 @@ android {
             shrinkResources false
         }
         release {
-            // Reflection and Binder hook entry points are intentionally preserved.
             minifyEnabled false
             shrinkResources false
             signingConfig signingConfigs.debug
