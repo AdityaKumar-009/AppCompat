@@ -6,6 +6,7 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import top.niunaijun.blackbox.BlackBoxCore
 import top.niunaijun.blackbox.utils.compat.LegacySpecialAccessCompat
+import java.util.concurrent.Executors
 
 /**
  * Android can only grant notification-listener access to a real installed service.
@@ -18,6 +19,11 @@ class NotificationAccessProxyService : NotificationListenerService() {
         private const val TAG = "AppCompatSpecialAccess"
         private const val USER_ID = 0
     }
+
+    // Android N+ delivers NotificationListenerService callbacks on the main thread.
+    // Keep virtual-package IPC ordered but off that thread so a slow legacy guest
+    // cannot make SystemUI consider the real listener unresponsive.
+    private val dispatcher = Executors.newSingleThreadExecutor()
 
     override fun onListenerConnected() {
         super.onListenerConnected()
@@ -42,30 +48,37 @@ class NotificationAccessProxyService : NotificationListenerService() {
     }
 
     private fun dispatch(action: String, sbn: StatusBarNotification?) {
-        val components = try {
-            LegacySpecialAccessCompat.notificationListenerGuestComponents()
-        } catch (t: Throwable) {
-            Log.w(TAG, "Unable to enumerate opted-in guest notification listeners", t)
-            emptyList()
-        }
-
-        for (component in components) {
-            try {
-                val bridgeIntent = Intent(action).apply {
-                    this.component = component
-                    if (sbn != null) {
-                        putExtra(LegacySpecialAccessCompat.EXTRA_STATUS_BAR_NOTIFICATION, sbn)
-                    }
-                }
-                BlackBoxCore.getBActivityManager().startService(
-                    bridgeIntent,
-                    null,
-                    false,
-                    USER_ID,
-                )
+        dispatcher.execute {
+            val components = try {
+                LegacySpecialAccessCompat.notificationListenerGuestComponents()
             } catch (t: Throwable) {
-                Log.w(TAG, "Could not forward notification callback to $component", t)
+                Log.w(TAG, "Unable to enumerate opted-in guest notification listeners", t)
+                emptyList()
+            }
+
+            for (component in components) {
+                try {
+                    val bridgeIntent = Intent(action).apply {
+                        this.component = component
+                        if (sbn != null) {
+                            putExtra(LegacySpecialAccessCompat.EXTRA_STATUS_BAR_NOTIFICATION, sbn)
+                        }
+                    }
+                    BlackBoxCore.getBActivityManager().startService(
+                        bridgeIntent,
+                        null,
+                        false,
+                        USER_ID,
+                    )
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Could not forward notification callback to $component", t)
+                }
             }
         }
+    }
+
+    override fun onDestroy() {
+        dispatcher.shutdownNow()
+        super.onDestroy()
     }
 }
