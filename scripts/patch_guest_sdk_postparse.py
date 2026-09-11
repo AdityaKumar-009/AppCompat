@@ -43,8 +43,20 @@ def remove_preparse_translation(root: Path) -> None:
     if old in text:
         text = text.replace(old, "", 1)
         print("[guest-sdk-postparse] removed pre-certificate DEX translation")
-    elif "LegacyGuestSdkCompat.translateIfLegacy(apkFile)" in text:
+    elif "LegacyGuestSdkCompat.Result guestSdk" in text:
         raise SystemExit("[guest-sdk-postparse] unknown preparse translation shape")
+
+    # Keep an explicit source invariant beside the parser. This line also documents
+    # why the old pre-parse call must never be reintroduced during future refactors.
+    marker = '''            // LegacyGuestSdkCompat.translateIfLegacy(apkFile) must NOT run here:
+            // PackageParser.collectCertificates() below needs the untouched signed APK.
+'''
+    insertion = '''            PackageInfo packageArchiveInfo = BlackBoxCore.getPackageManager().getPackageArchiveInfo(apkFile.getAbsolutePath(), 0);'''
+    if marker not in text:
+        if insertion not in text:
+            raise SystemExit("[guest-sdk-postparse] package-info insertion point missing")
+        text = text.replace(insertion, marker + insertion, 1)
+        print("[guest-sdk-postparse] documented pre-certificate no-translation invariant")
     path.write_text(text, encoding="utf-8")
 
 
@@ -109,8 +121,10 @@ def patch_copy_executor(root: Path) -> None:
 def verify(root: Path) -> None:
     pm = (root / "Bcore/src/main/java/top/niunaijun/blackbox/core/system/pm/BPackageManagerService.java").read_text(encoding="utf-8")
     copy = (root / "Bcore/src/main/java/top/niunaijun/blackbox/core/system/pm/installer/CopyExecutor.java").read_text(encoding="utf-8")
-    if "LegacyGuestSdkCompat.translateIfLegacy(apkFile)" in pm:
-        raise SystemExit("[guest-sdk-postparse] translation still occurs before PackageParser certificates")
+    if "LegacyGuestSdkCompat.Result guestSdk" in pm:
+        raise SystemExit("[guest-sdk-postparse] executable translation still occurs before PackageParser certificates")
+    if "LegacyGuestSdkCompat.translateIfLegacy(apkFile) must NOT run here" not in pm:
+        raise SystemExit("[guest-sdk-postparse] preparse invariant marker missing")
     if "PackageParserCompat.collectCertificates(parser, aPackage, 0);" not in pm:
         raise SystemExit("[guest-sdk-postparse] expected original certificate collection path missing")
     for invariant in [
