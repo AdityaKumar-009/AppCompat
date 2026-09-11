@@ -9,8 +9,8 @@
     <queries>
         <!-- Package visibility is required on Android 11+ for the visible host to
              verify/provision its versioned ABI helpers through PackageManager. -->
-        <package android:name="com.appcompat.runtime.engine32.v8" />
-        <package android:name="com.appcompat.runtime.engine64.v8" />
+        <package android:name="com.appcompat.runtime.engine32.v9" />
+        <package android:name="com.appcompat.runtime.engine64.v9" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
