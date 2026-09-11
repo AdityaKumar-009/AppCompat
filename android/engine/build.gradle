@@ -13,12 +13,12 @@ android {
         // The helper is the real Android UID/package behind virtual guests. Android
         // applies many compatibility decisions to this targetSdk, not to the guest
         // manifest BlackBox exposes in-process. API 25 is intentionally the newest
-        // pre-Oreo profile. v12 additionally rewrites guest-only Build.VERSION
-        // references so legacy bytecode sees the same API-25 identity while engine
-        // internals still see the real host SDK for Binder/framework compatibility.
+        // pre-Oreo profile. v13 replaces v12's raw DEX string mutation with a
+        // structural dexlib2 rewrite, preserving sorted identifier tables and ART
+        // loadability while guest bytecode sees the API-25 Build.VERSION shim.
         targetSdk 25
-        versionCode 12
-        versionName "0.12.0"
+        versionCode 13
+        versionName "0.13.0"
         multiDexEnabled true
         buildConfigField "int", "COMPAT_PROFILE_TARGET_SDK", "25"
     }
@@ -27,7 +27,7 @@ android {
     productFlavors {
         arm32 {
             dimension "runtime"
-            applicationId "com.appcompat.runtime.engine32.v12"
+            applicationId "com.appcompat.runtime.engine32.v13"
             ndk {
                 abiFilters "armeabi-v7a"
             }
@@ -35,7 +35,7 @@ android {
         }
         arm64 {
             dimension "runtime"
-            applicationId "com.appcompat.runtime.engine64.v12"
+            applicationId "com.appcompat.runtime.engine64.v13"
             ndk {
                 abiFilters "arm64-v8a"
             }
