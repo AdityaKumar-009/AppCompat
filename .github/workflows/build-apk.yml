@@ -120,29 +120,39 @@ jobs:
           set -euo pipefail
           ROOT="third_party/NewBlackbox/Bcore/src/main/java/top/niunaijun/blackbox"
           SPECIAL="$ROOT/utils/compat/LegacySpecialAccessCompat.java"
+          COMPONENT="$ROOT/utils/compat/LegacySystemComponentCompat.java"
+          GUESTSDK="$ROOT/utils/compat/LegacyGuestSdkCompat.java"
           START="$ROOT/fake/service/ActivityManagerCommonProxy.java"
           SETTINGS="$ROOT/fake/service/ISettingsProviderProxy.java"
           NOTIFICATION="$ROOT/fake/service/INotificationManagerProxy.java"
           APPOPS="$ROOT/fake/service/IAppOpsManagerProxy.java"
           SERVICES="$ROOT/app/dispatcher/AppServiceDispatcher.java"
+          DEVICEPOLICY="$ROOT/fake/service/IDevicePolicyManagerProxy.java"
           USAGE="$ROOT/fake/service/IUsageStatsManagerProxy.java"
           MEDIA="$ROOT/fake/service/IMediaSessionManagerProxy.java"
           HOOKS="$ROOT/fake/hook/HookManager.java"
           WINDOW="$ROOT/fake/service/IWindowSessionProxy.java"
           PROXY="android/engine/src/main/kotlin/com/appcompat/engine/NotificationAccessProxyService.kt"
+          ACCESS_PROXY="android/engine/src/main/kotlin/com/appcompat/engine/LegacyAccessibilityProxyService.kt"
+          ADMIN_PROXY="android/engine/src/main/kotlin/com/appcompat/engine/LegacyDeviceAdminReceiver.kt"
           MANIFEST="android/engine/src/main/AndroidManifest.xml"
 
-          test -s "$SPECIAL" && test -s "$PROXY" && test -s "$USAGE" && test -s "$WINDOW"
+          test -s "$SPECIAL" && test -s "$COMPONENT" && test -s "$GUESTSDK"
+          test -s "$PROXY" && test -s "$ACCESS_PROXY" && test -s "$ADMIN_PROXY"
+          test -s "$USAGE" && test -s "$WINDOW"
           grep -q 'NOTIFICATION_LISTENER_DETAIL_SETTINGS' "$SPECIAL"
           grep -q 'isSpecialAccessSettingsIntent' "$SPECIAL"
           grep -q 'ensureResolvableSpecialAccessSettingsIntent' "$SPECIAL"
           grep -q 'rewriteSettingsIntent' "$START"
-          grep -q '!didRedirectSamsungAccount && !specialAccessSettings' "$START"
-          grep -q 'Converting special-access startActivityForResult to safe external launch' "$START"
+          grep -q 'rewriteSystemGrantIntent' "$START"
+          grep -q 'systemComponentGrant' "$START"
           grep -q 'translatedSecureString' "$SETTINGS"
+          grep -q 'LegacySystemComponentCompat.translatedSecureInt' "$SETTINGS"
           grep -q 'IsNotificationListenerAccessGranted' "$NOTIFICATION"
           grep -q 'isSpecialAccessAppOp' "$APPOPS"
           grep -q 'dispatchSpecialAccessCallback' "$SERVICES"
+          grep -q 'dispatchSystemComponentCallback' "$SERVICES"
+          grep -q 'isDeviceAdminActiveForGuest' "$DEVICEPOLICY"
           grep -q 'replaceAllAppPkg' "$USAGE"
           grep -q 'addInjector(new IUsageStatsManagerProxy())' "$HOOKS"
           grep -q 'NotificationListenerIdentity' "$MEDIA"
@@ -150,10 +160,14 @@ jobs:
           grep -q 'TYPE_APPLICATION_OVERLAY' "$WINDOW"
           grep -q 'isLegacyAlertType' "$WINDOW"
           grep -q 'isRejectedAddResult' "$WINDOW"
+          grep -q 'Landroid/os/Build\$VERSION;' "$GUESTSDK"
+          grep -q 'Lappcompat/compat/Version;' "$GUESTSDK"
+          grep -q 'translateIfLegacy(apkFile)' "$ROOT/core/system/pm/BPackageManagerService.java"
           grep -q 'android.permission.BIND_NOTIFICATION_LISTENER_SERVICE' "$MANIFEST"
+          grep -q 'android.permission.BIND_ACCESSIBILITY_SERVICE' "$MANIFEST"
+          grep -q 'android.permission.BIND_DEVICE_ADMIN' "$MANIFEST"
           grep -q 'android.permission.SYSTEM_ALERT_WINDOW' "$MANIFEST"
-          grep -q 'android.permission.PACKAGE_USAGE_STATS' "$MANIFEST"
-          echo "Special-access, service-attribution and legacy-window translation verified"
+          echo "Special-access, component, guest-SDK and legacy-window translation verified"
 
       - name: Verify host-helper version contract
         shell: bash
@@ -163,16 +177,38 @@ jobs:
           ENGINE_CODE="$(grep -E '^[[:space:]]*versionCode[[:space:]]+[0-9]+' android/engine/build.gradle | head -n1 | awk '{print $2}')"
           PUBSPEC_CODE="$(awk -F'+' '/^version: / {print $2}' pubspec.yaml)"
           test -n "$HOST_CODE" && test "$HOST_CODE" = "$ENGINE_CODE" && test "$HOST_CODE" = "$PUBSPEC_CODE"
+          test "$HOST_CODE" = "12"
           grep -q 'targetSdk 25' android/engine/build.gradle
           grep -q 'COMPAT_PROFILE_TARGET_SDK.*25' android/engine/build.gradle
           grep -q 'BuildConfig.VERSION_CODE.toLong()' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
-          grep -q 'com.appcompat.runtime.engine32.v11' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
-          grep -q 'com.appcompat.runtime.engine64.v11' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
-          grep -q 'applicationId "com.appcompat.runtime.engine32.v11"' android/engine/build.gradle
-          grep -q 'applicationId "com.appcompat.runtime.engine64.v11"' android/engine/build.gradle
-          grep -q 'com.appcompat.runtime.engine32.v11' android/app/src/main/AndroidManifest.xml
-          grep -q 'com.appcompat.runtime.engine64.v11' android/app/src/main/AndroidManifest.xml
-          echo "Host/helper v11 contract verified at versionCode=$HOST_CODE with API-25 compatibility profile"
+          grep -q 'com.appcompat.runtime.engine32.v12' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
+          grep -q 'com.appcompat.runtime.engine64.v12' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
+          grep -q 'applicationId "com.appcompat.runtime.engine32.v12"' android/engine/build.gradle
+          grep -q 'applicationId "com.appcompat.runtime.engine64.v12"' android/engine/build.gradle
+          grep -q 'com.appcompat.runtime.engine32.v12' android/app/src/main/AndroidManifest.xml
+          grep -q 'com.appcompat.runtime.engine64.v12' android/app/src/main/AndroidManifest.xml
+          echo "Host/helper v12 contract verified at versionCode=$HOST_CODE with API-25 profile"
+
+      - name: Build guest API-25 identity shim
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="compat/legacy-build-shim/src/appcompat/compat/Version.java"
+          WORK="build/legacy-build-shim"
+          rm -rf "$WORK"
+          mkdir -p "$WORK/classes" "$WORK/dex" android/engine/src/main/assets/compat
+          javac --release 8 -d "$WORK/classes" "$SRC"
+          jar --create --file "$WORK/version-shim.jar" -C "$WORK/classes" .
+          "${ANDROID_HOME}/build-tools/36.0.0/d8" \
+            --min-api 21 \
+            --output "$WORK/dex" \
+            "$WORK/version-shim.jar"
+          test -s "$WORK/dex/classes.dex"
+          "${ANDROID_HOME}/build-tools/36.0.0/dexdump" -d "$WORK/dex/classes.dex" \
+            | grep -q 'Lappcompat/compat/Version;'
+          cp "$WORK/dex/classes.dex" android/engine/src/main/assets/compat/legacy-build-shim.dex
+          test -s android/engine/src/main/assets/compat/legacy-build-shim.dex
+          echo "Guest Build.VERSION API-25 shim generated"
 
       - name: Prepare Gradle wrapper
         shell: bash
@@ -217,6 +253,8 @@ jobs:
           ! grep -q '^lib/arm64-v8a/' /tmp/engine32-files.txt
           grep -q '^lib/arm64-v8a/libblackbox.so$' /tmp/engine64-files.txt
           ! grep -q '^lib/armeabi-v7a/' /tmp/engine64-files.txt
+          grep -q '^assets/compat/legacy-build-shim.dex$' /tmp/engine32-files.txt
+          grep -q '^assets/compat/legacy-build-shim.dex$' /tmp/engine64-files.txt
 
           "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "$ARM32" | grep -q "targetSdkVersion:'25'"
           "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "$ARM64" | grep -q "targetSdkVersion:'25'"
@@ -245,14 +283,14 @@ jobs:
           grep -q '^assets/engines/appcompat-engine64.apk$' /tmp/appcompat-smart-files.txt
 
           "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose "$APK"
-          cp "$APK" AppCompat-smart-v0.11.0.apk
-          ls -lh AppCompat-smart-v0.11.0.apk
-          sha256sum AppCompat-smart-v0.11.0.apk
+          cp "$APK" AppCompat-smart-v0.12.0.apk
+          ls -lh AppCompat-smart-v0.12.0.apk
+          sha256sum AppCompat-smart-v0.12.0.apk
 
       - name: Upload smart APK
         uses: actions/upload-artifact@v4
         with:
-          name: AppCompat-smart-v0.11.0-apk
-          path: AppCompat-smart-v0.11.0.apk
+          name: AppCompat-smart-v0.12.0-apk
+          path: AppCompat-smart-v0.12.0.apk
           if-no-files-found: error
           retention-days: 14
