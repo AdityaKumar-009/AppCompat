@@ -18,6 +18,14 @@ android {
         multiDexEnabled true
     }
 
+    // EngineBroker reads VERSION_CODE from the generated BuildConfig so the
+    // embedded helper APK contract always tracks the host application version.
+    // AGP 8+ does not guarantee BuildConfig generation unless it is explicitly
+    // enabled for the module.
+    buildFeatures {
+        buildConfig true
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
