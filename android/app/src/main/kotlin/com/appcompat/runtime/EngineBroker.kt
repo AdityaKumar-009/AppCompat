@@ -14,14 +14,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-/**
- * Routes a guest APK into an ABI-matched compatibility process.
- *
- * Android chooses one primary ABI for an installed package, so a 64-bit host
- * process cannot simply dlopen a 32-bit guest library (or vice versa). AppCompat
- * keeps the visible product as one APK, then provisions a hidden, signature-
- * protected runtime package for the required bitness on first use.
- */
+/** Routes a guest APK into an ABI-matched compatibility process. */
 object EngineBroker {
     const val ENGINE_PERMISSION = "com.appcompat.runtime.permission.ENGINE"
     const val ACTION_RUN = "com.appcompat.runtime.engine.RUN"
@@ -60,7 +53,6 @@ object EngineBroker {
                 else -> null
             }
         }
-
         if (has64 && Build.SUPPORTED_64_BIT_ABIS.isNotEmpty()) return 64
         if (has32 && Build.SUPPORTED_32_BIT_ABIS.isNotEmpty()) return 32
         return null
@@ -233,16 +225,40 @@ object EngineBroker {
             ?.optInt("engineBits")
             ?.takeIf { it == 32 || it == 64 }
 
-    fun registeredApkPath(context: Context, packageName: String): String? =
-        registeredObject(context, packageName)
+    /**
+     * v0.7 and earlier did not store apkPath in the registry. Recover those entries
+     * by matching the package name against the private imported APK cache. Nothing
+     * leaves the app sandbox and no external-storage scan is performed.
+     */
+    fun registeredApkPath(context: Context, packageName: String): String? {
+        val direct = registeredObject(context, packageName)
             ?.optString("apkPath")
-            ?.takeIf { it.isNotBlank() }
+            ?.takeIf { it.isNotBlank() && File(it).isFile }
+        if (direct != null) return direct
+        return findCachedSourceApk(context, packageName)?.absolutePath
+    }
 
     fun registeredName(context: Context, packageName: String): String =
         registeredObject(context, packageName)
             ?.optString("name")
             ?.takeIf { it.isNotBlank() }
             ?: packageName
+
+    @Suppress("DEPRECATION")
+    private fun findCachedSourceApk(context: Context, packageName: String): File? {
+        val directory = File(context.filesDir, "imported-apks")
+        val candidates = directory.listFiles { file ->
+            file.isFile && file.extension.equals("apk", ignoreCase = true)
+        }?.sortedByDescending { it.lastModified() }.orEmpty()
+
+        for (candidate in candidates) {
+            val parsed = runCatching {
+                context.packageManager.getPackageArchiveInfo(candidate.absolutePath, 0)
+            }.getOrNull()
+            if (parsed?.packageName == packageName) return candidate
+        }
+        return null
+    }
 
     fun listRegistered(context: Context): List<Map<String, Any?>> {
         val apps = readRegistry(context)
@@ -251,12 +267,13 @@ object EngineBroker {
             val item = apps.optJSONObject(i) ?: continue
             val bits = item.optInt("engineBits")
             if (bits != 32 && bits != 64) continue
+            val packageName = item.optString("packageName")
             out += linkedMapOf(
-                "packageName" to item.optString("packageName"),
+                "packageName" to packageName,
                 "name" to item.optString("name"),
                 "engineBits" to bits,
                 "runtimeInstalled" to isInstalled(context, bits),
-                "hasSourceApk" to item.optString("apkPath").let { it.isNotBlank() && File(it).isFile }
+                "hasSourceApk" to (registeredApkPath(context, packageName) != null)
             )
         }
         return out
