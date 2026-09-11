@@ -10,20 +10,24 @@ android {
 
     defaultConfig {
         minSdk 24
-        // The helper is sideloaded from the signed AppCompat host, not Play-listed.
-        // Keeping its target at 28 preserves legacy framework semantics while the
-        // permission bridge maps dangerous permissions onto the helper's real UID.
-        targetSdk 28
-        versionCode 10
-        versionName "0.10.0"
+        // The helper is the real Android UID/package behind virtual guests. Android
+        // applies many compatibility decisions to this targetSdk, not to the guest
+        // manifest BlackBox exposes in-process. API 25 is intentionally the newest
+        // pre-Oreo profile: it stays below the API-26 behavior gate while remaining
+        // installable on current Android 14-16 devices. Removed APIs are translated
+        // separately at Binder, Settings, permission and WindowManager boundaries.
+        targetSdk 25
+        versionCode 11
+        versionName "0.11.0"
         multiDexEnabled true
+        buildConfigField "int", "COMPAT_PROFILE_TARGET_SDK", "25"
     }
 
     flavorDimensions += "runtime"
     productFlavors {
         arm32 {
             dimension "runtime"
-            applicationId "com.appcompat.runtime.engine32.v10"
+            applicationId "com.appcompat.runtime.engine32.v11"
             ndk {
                 abiFilters "armeabi-v7a"
             }
@@ -31,7 +35,7 @@ android {
         }
         arm64 {
             dimension "runtime"
-            applicationId "com.appcompat.runtime.engine64.v10"
+            applicationId "com.appcompat.runtime.engine64.v11"
             ndk {
                 abiFilters "arm64-v8a"
             }
