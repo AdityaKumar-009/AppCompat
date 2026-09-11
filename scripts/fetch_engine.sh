@@ -30,6 +30,7 @@ python3 "$ROOT/scripts/patch_special_access_oem_hardening.py" "$DEST"
 python3 "$ROOT/scripts/patch_special_access_service_attribution.py" "$DEST"
 python3 "$ROOT/scripts/patch_system_component_translation.py" "$DEST"
 python3 "$ROOT/scripts/patch_guest_sdk_identity.py" "$DEST"
+python3 "$ROOT/scripts/patch_guest_sdk_identity_hardening.py" "$DEST"
 python3 "$ROOT/scripts/patch_legacy_window_translation.py" "$DEST"
 python3 "$ROOT/scripts/patch_sdk_gate_calls.py" "$DEST"
 
