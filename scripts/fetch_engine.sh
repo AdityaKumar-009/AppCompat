@@ -27,6 +27,7 @@ python3 "$ROOT/scripts/patch_framework_translation_hardening.py" "$DEST"
 python3 "$ROOT/scripts/patch_permission_translation.py" "$DEST"
 python3 "$ROOT/scripts/patch_special_access_translation.py" "$DEST"
 python3 "$ROOT/scripts/patch_special_access_oem_hardening.py" "$DEST"
+python3 "$ROOT/scripts/patch_special_access_service_attribution.py" "$DEST"
 python3 "$ROOT/scripts/patch_sdk_gate_calls.py" "$DEST"
 
 echo "Prepared patched compatibility engine $ENGINE_COMMIT"
