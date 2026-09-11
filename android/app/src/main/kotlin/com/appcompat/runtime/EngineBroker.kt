@@ -23,10 +23,11 @@ object EngineBroker {
     const val ACTION_LAST_CRASH = "com.appcompat.runtime.engine.LAST_CRASH"
     const val BRIDGE_CLASS = "com.appcompat.engine.EngineBridgeActivity"
 
-    // v8 contains the modern runtime-permission bridge. Versioned helper package
-    // IDs prevent Android from reusing a stale helper signed by an older CI build.
-    private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v8"
-    private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v8"
+    // v9 contains special-app-access translation and a real notification listener
+    // proxy. Versioned helper package IDs prevent Android from reusing a stale
+    // runtime that cannot appear in modern Settings permission pages.
+    private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v9"
+    private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v9"
     private const val REGISTRY_PREFS = "appcompat_virtual_registry"
     private const val REGISTRY_JSON = "apps"
 
