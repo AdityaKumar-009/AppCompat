@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Blacks-BlackBox carries the Android 14-16 service/package/split-APK hooks used by
 # AppCompat. Pin the exact upstream revision for reproducible releases, then apply
-# our small audited bootstrap fixes on top of that immutable source snapshot.
+# our audited compatibility fixes on top of that immutable source snapshot.
 ENGINE_REPO="https://github.com/Black00Z/Blacks-BlackBox.git"
 ENGINE_COMMIT="40282a7bf4500948cfd598fc67e6e63114b26dd9"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,5 +22,6 @@ else
 fi
 
 python3 "$ROOT/scripts/patch_engine.py" "$DEST"
+python3 "$ROOT/scripts/patch_framework_translation.py" "$DEST"
 
 echo "Prepared patched compatibility engine $ENGINE_COMMIT"
