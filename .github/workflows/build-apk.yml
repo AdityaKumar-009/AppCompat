@@ -114,6 +114,33 @@ jobs:
           grep -q 'pendingEngineApk?.absolutePath' "$HOST"
           echo "Permission preflight and durable library registration verified"
 
+      - name: Verify special app access translation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="third_party/NewBlackbox/Bcore/src/main/java/top/niunaijun/blackbox"
+          SPECIAL="$ROOT/utils/compat/LegacySpecialAccessCompat.java"
+          START="$ROOT/fake/service/ActivityManagerCommonProxy.java"
+          SETTINGS="$ROOT/fake/service/ISettingsProviderProxy.java"
+          NOTIFICATION="$ROOT/fake/service/INotificationManagerProxy.java"
+          APPOPS="$ROOT/fake/service/IAppOpsManagerProxy.java"
+          SERVICES="$ROOT/app/dispatcher/AppServiceDispatcher.java"
+          PROXY="android/engine/src/main/kotlin/com/appcompat/engine/NotificationAccessProxyService.kt"
+          MANIFEST="android/engine/src/main/AndroidManifest.xml"
+
+          test -s "$SPECIAL" && test -s "$PROXY"
+          grep -q 'NOTIFICATION_LISTENER_DETAIL_SETTINGS' "$SPECIAL"
+          grep -q 'rewriteSettingsIntent' "$START"
+          grep -q 'translatedSecureString' "$SETTINGS"
+          grep -q 'IsNotificationListenerAccessGranted' "$NOTIFICATION"
+          grep -q 'isSpecialAccessAppOp' "$APPOPS"
+          grep -q 'dispatchSpecialAccessCallback' "$SERVICES"
+          grep -q 'NotificationAccessProxyService' "$PROXY"
+          grep -q 'android.permission.BIND_NOTIFICATION_LISTENER_SERVICE' "$MANIFEST"
+          grep -q 'android.permission.SYSTEM_ALERT_WINDOW' "$MANIFEST"
+          grep -q 'android.permission.PACKAGE_USAGE_STATS' "$MANIFEST"
+          echo "Special app access translation and notification proxy verified"
+
       - name: Verify host-helper version contract
         shell: bash
         run: |
@@ -123,10 +150,12 @@ jobs:
           PUBSPEC_CODE="$(awk -F'+' '/^version: / {print $2}' pubspec.yaml)"
           test -n "$HOST_CODE" && test "$HOST_CODE" = "$ENGINE_CODE" && test "$HOST_CODE" = "$PUBSPEC_CODE"
           grep -q 'BuildConfig.VERSION_CODE.toLong()' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
-          grep -q 'com.appcompat.runtime.engine32.v8' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
-          grep -q 'com.appcompat.runtime.engine64.v8' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
-          grep -q 'applicationId "com.appcompat.runtime.engine32.v8"' android/engine/build.gradle
-          grep -q 'applicationId "com.appcompat.runtime.engine64.v8"' android/engine/build.gradle
+          grep -q 'com.appcompat.runtime.engine32.v9' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
+          grep -q 'com.appcompat.runtime.engine64.v9' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
+          grep -q 'applicationId "com.appcompat.runtime.engine32.v9"' android/engine/build.gradle
+          grep -q 'applicationId "com.appcompat.runtime.engine64.v9"' android/engine/build.gradle
+          grep -q 'com.appcompat.runtime.engine32.v9' android/app/src/main/AndroidManifest.xml
+          grep -q 'com.appcompat.runtime.engine64.v9' android/app/src/main/AndroidManifest.xml
           echo "Host/helper version contract verified at versionCode=$HOST_CODE"
 
       - name: Prepare Gradle wrapper
@@ -198,14 +227,14 @@ jobs:
           grep -q '^assets/engines/appcompat-engine64.apk$' /tmp/appcompat-smart-files.txt
 
           "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose "$APK"
-          cp "$APK" AppCompat-smart-v0.8.0.apk
-          ls -lh AppCompat-smart-v0.8.0.apk
-          sha256sum AppCompat-smart-v0.8.0.apk
+          cp "$APK" AppCompat-smart-v0.9.0.apk
+          ls -lh AppCompat-smart-v0.9.0.apk
+          sha256sum AppCompat-smart-v0.9.0.apk
 
       - name: Upload smart APK
         uses: actions/upload-artifact@v4
         with:
-          name: AppCompat-smart-v0.8.0-apk
-          path: AppCompat-smart-v0.8.0.apk
+          name: AppCompat-smart-v0.9.0-apk
+          path: AppCompat-smart-v0.9.0.apk
           if-no-files-found: error
           retention-days: 14
