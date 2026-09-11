@@ -55,7 +55,7 @@
 
     <application
         android:name=".EngineApplication"
-        android:label="AppCompat Legacy Runtime v12"
+        android:label="AppCompat Legacy Runtime v13"
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:extractNativeLibs="true"
@@ -70,12 +70,9 @@
             android:finishOnTaskLaunch="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
-        <!-- Android Settings can only grant notification access to a real installed
-             NotificationListenerService. This service owns that system grant and
-             forwards callbacks to opted-in virtual guest listener services. -->
         <service
             android:name=".NotificationAccessProxyService"
-            android:label="AppCompat Runtime v12 notification access"
+            android:label="AppCompat Runtime v13 notification access"
             android:exported="false"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
@@ -83,12 +80,9 @@
             </intent-filter>
         </service>
 
-        <!-- Accessibility is also component-bound. The user explicitly enables this
-             real service in Android Settings; callbacks are then translated to the
-             virtual service identity that the imported app declared. -->
         <service
             android:name=".LegacyAccessibilityProxyService"
-            android:label="AppCompat Runtime v12 accessibility bridge"
+            android:label="AppCompat Runtime v13 accessibility bridge"
             android:exported="true"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
@@ -99,12 +93,9 @@
                 android:resource="@xml/appcompat_accessibility_service" />
         </service>
 
-        <!-- Device Administrator activation likewise requires a real receiver.
-             The proxy requests only force-lock, the capability legacy Floatify uses.
-             Android's own confirmation UI remains mandatory. -->
         <receiver
             android:name=".LegacyDeviceAdminReceiver"
-            android:label="AppCompat Runtime v12 device administrator"
+            android:label="AppCompat Runtime v13 device administrator"
             android:exported="true"
             android:permission="android.permission.BIND_DEVICE_ADMIN">
             <meta-data
