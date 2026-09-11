@@ -26,7 +26,7 @@ class MainActivity : FlutterActivity() {
         private const val PENDING_NATIVE_STARTED_AT = "pending_native_started_at"
     }
 
-    private enum class EngineOperation { RUN, LAUNCH, REMOVE }
+    private enum class EngineOperation { RUN, LIBRARY_RUN, LAUNCH, REMOVE }
 
     private val worker = Executors.newSingleThreadExecutor()
     private var pendingPickerResult: MethodChannel.Result? = null
@@ -69,15 +69,15 @@ class MainActivity : FlutterActivity() {
                         result.success(false)
                     } else {
                         // A helper runtime is versioned and may be replaced between
-                        // AppCompat releases. If we retained the imported APK, run
-                        // the install path again: it is idempotent and reconstructs
-                        // the guest inside the current helper before launching.
+                        // AppCompat releases. Re-import a retained source APK into
+                        // the current helper, while preserving the Boolean result
+                        // contract expected by the library's Run button.
                         val sourceApk = EngineBroker.registeredApkPath(this, packageName)
                             ?.let(::File)
                             ?.takeIf { it.isFile && it.length() > 0L }
                         beginEngineOperation(
                             result = result,
-                            operation = if (sourceApk != null) EngineOperation.RUN else EngineOperation.LAUNCH,
+                            operation = if (sourceApk != null) EngineOperation.LIBRARY_RUN else EngineOperation.LAUNCH,
                             bits = bits,
                             packageName = packageName,
                             appName = EngineBroker.registeredName(this, packageName),
@@ -210,9 +210,6 @@ class MainActivity : FlutterActivity() {
         pendingEngineName = appName
         pendingEngineApk = apk
 
-        // Android does not permit an ordinary application to silently install an
-        // ABI-specific helper. Ask once for the standard "install unknown apps"
-        // permission when required, then resume the pending operation automatically.
         if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls() && !EngineBroker.isInstalled(this, bits)) {
             try {
                 waitingForUnknownSources = true
@@ -253,7 +250,7 @@ class MainActivity : FlutterActivity() {
             return
         }
         val action = when (operation) {
-            EngineOperation.RUN -> EngineBroker.ACTION_RUN
+            EngineOperation.RUN, EngineOperation.LIBRARY_RUN -> EngineBroker.ACTION_RUN
             EngineOperation.LAUNCH -> EngineBroker.ACTION_LAUNCH
             EngineOperation.REMOVE -> EngineBroker.ACTION_REMOVE
         }
@@ -278,7 +275,7 @@ class MainActivity : FlutterActivity() {
     private fun finishPendingEngineFailure(message: String) {
         val result = pendingEngineResult ?: return
         when (pendingEngineOperation) {
-            EngineOperation.LAUNCH -> result.success(false)
+            EngineOperation.LAUNCH, EngineOperation.LIBRARY_RUN -> result.success(false)
             EngineOperation.REMOVE -> result.error("engine_failure", message, null)
             else -> result.success(
                 mapOf(
@@ -356,8 +353,8 @@ class MainActivity : FlutterActivity() {
                 (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             contentResolver.takePersistableUriPermission(uri, flags and Intent.FLAG_GRANT_READ_URI_PERMISSION)
         } catch (_: Throwable) {
-            // Some document providers grant only a transient URI. ApkAnalyzer makes
-            // a private copy immediately, so virtual execution remains reliable.
+            // ApkAnalyzer makes a private copy immediately, so a transient document
+            // grant is sufficient for compatibility execution.
         }
 
         worker.execute {
@@ -372,6 +369,17 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+    }
+
+    private fun registerPendingGuestIfInstalled(launched: Boolean, installed: Boolean) {
+        if (!launched && !installed) return
+        EngineBroker.register(
+            this,
+            pendingEnginePackage,
+            pendingEngineName.ifBlank { pendingEnginePackage },
+            pendingEngineBits,
+            pendingEngineApk?.absolutePath
+        )
     }
 
     private fun handleEngineResult(resultCode: Int, data: Intent?) {
@@ -391,17 +399,7 @@ class MainActivity : FlutterActivity() {
         when (operation) {
             EngineOperation.RUN -> {
                 // Installation is durable independently of first-screen success.
-                // A legacy app that crashes in welcome/onboarding must remain in
-                // the library so later compatibility fixes can retry it in place.
-                if (launched || installed) {
-                    EngineBroker.register(
-                        this,
-                        pendingEnginePackage,
-                        pendingEngineName.ifBlank { pendingEnginePackage },
-                        pendingEngineBits,
-                        pendingEngineApk?.absolutePath
-                    )
-                }
+                registerPendingGuestIfInstalled(launched, installed)
                 if (!extras.containsKey("launched")) extras["launched"] = resultCode == Activity.RESULT_OK
                 extras["installed"] = installed
                 extras["packageName"] = pendingEnginePackage
@@ -413,6 +411,10 @@ class MainActivity : FlutterActivity() {
                     extras["message"] = "The compatibility runtime returned without a successful launch."
                 }
                 result.success(extras)
+            }
+            EngineOperation.LIBRARY_RUN -> {
+                registerPendingGuestIfInstalled(launched, installed)
+                result.success(launched || resultCode == Activity.RESULT_OK)
             }
             EngineOperation.LAUNCH -> result.success(launched || resultCode == Activity.RESULT_OK)
             EngineOperation.REMOVE -> {
