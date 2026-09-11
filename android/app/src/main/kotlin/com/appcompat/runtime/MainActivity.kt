@@ -68,13 +68,20 @@ class MainActivity : FlutterActivity() {
                     if (bits == null) {
                         result.success(false)
                     } else {
+                        // A helper runtime is versioned and may be replaced between
+                        // AppCompat releases. If we retained the imported APK, run
+                        // the install path again: it is idempotent and reconstructs
+                        // the guest inside the current helper before launching.
+                        val sourceApk = EngineBroker.registeredApkPath(this, packageName)
+                            ?.let(::File)
+                            ?.takeIf { it.isFile && it.length() > 0L }
                         beginEngineOperation(
                             result = result,
-                            operation = EngineOperation.LAUNCH,
+                            operation = if (sourceApk != null) EngineOperation.RUN else EngineOperation.LAUNCH,
                             bits = bits,
                             packageName = packageName,
-                            appName = packageName,
-                            apk = null
+                            appName = EngineBroker.registeredName(this, packageName),
+                            apk = sourceApk
                         )
                     }
                 }
@@ -94,7 +101,7 @@ class MainActivity : FlutterActivity() {
                             operation = EngineOperation.REMOVE,
                             bits = bits,
                             packageName = packageName,
-                            appName = packageName,
+                            appName = EngineBroker.registeredName(this, packageName),
                             apk = null
                         )
                     }
@@ -216,8 +223,6 @@ class MainActivity : FlutterActivity() {
                 return
             } catch (t: Throwable) {
                 Log.w("AppCompat", "Could not open unknown-source settings", t)
-                // Fall through to PackageInstaller; some OEM installers can still
-                // present their own authorization UI.
             }
         }
 
@@ -278,6 +283,7 @@ class MainActivity : FlutterActivity() {
             else -> result.success(
                 mapOf(
                     "launched" to false,
+                    "installed" to false,
                     "packageName" to pendingEnginePackage,
                     "engineBits" to pendingEngineBits,
                     "message" to message
@@ -378,23 +384,32 @@ class MainActivity : FlutterActivity() {
         }
 
         val launched = extras["launched"] == true
+        val installed = extras["installed"] == true
         val removed = extras["removed"] == true
         val message = extras["message"]?.toString()
 
         when (operation) {
             EngineOperation.RUN -> {
-                if (launched) {
+                // Installation is durable independently of first-screen success.
+                // A legacy app that crashes in welcome/onboarding must remain in
+                // the library so later compatibility fixes can retry it in place.
+                if (launched || installed) {
                     EngineBroker.register(
                         this,
                         pendingEnginePackage,
                         pendingEngineName.ifBlank { pendingEnginePackage },
-                        pendingEngineBits
+                        pendingEngineBits,
+                        pendingEngineApk?.absolutePath
                     )
                 }
                 if (!extras.containsKey("launched")) extras["launched"] = resultCode == Activity.RESULT_OK
+                extras["installed"] = installed
                 extras["packageName"] = pendingEnginePackage
                 extras["engineBits"] = pendingEngineBits
-                if (message == null && resultCode != Activity.RESULT_OK) {
+                if (!launched && installed) {
+                    extras["message"] = message
+                        ?: "The app was added to your Compatibility library, but its first-run screen did not complete. You can retry it from the library without importing the APK again."
+                } else if (message == null && resultCode != Activity.RESULT_OK) {
                     extras["message"] = "The compatibility runtime returned without a successful launch."
                 }
                 result.success(extras)
