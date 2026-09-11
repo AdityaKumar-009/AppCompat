@@ -87,6 +87,33 @@ jobs:
           grep -q 'return isAtLeast(33);' "$BUILD_COMPAT"
           echo "Runtime framework translation verified for Android API 21-36 gates"
 
+      - name: Verify runtime permission translation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="third_party/NewBlackbox/Bcore/src/main/java/top/niunaijun/blackbox"
+          PERMISSION_COMPAT="$ROOT/utils/compat/LegacyPermissionCompat.java"
+          PM_PROXY="$ROOT/fake/service/IPackageManagerProxy.java"
+          AM_PROXY="$ROOT/fake/service/IActivityManagerProxy.java"
+          BRIDGE="android/engine/src/main/kotlin/com/appcompat/engine/EngineBridgeActivity.kt"
+          RUNTIME="android/engine/src/main/kotlin/com/appcompat/engine/EngineRuntime.kt"
+          HOST="android/app/src/main/kotlin/com/appcompat/runtime/MainActivity.kt"
+
+          test -s "$PERMISSION_COMPAT"
+          grep -q 'requiredHostRuntimePermissions' "$PERMISSION_COMPAT"
+          grep -q 'READ_MEDIA_IMAGES' "$PERMISSION_COMPAT"
+          grep -q 'BLUETOOTH_CONNECT' "$PERMISSION_COMPAT"
+          grep -q 'checkGuestPermission' "$PERMISSION_COMPAT"
+          grep -q 'LegacyPermissionCompat.checkGuestPermission' "$PM_PROXY"
+          grep -q 'LegacyPermissionCompat.checkGuestPermission' "$AM_PROXY"
+          grep -q 'requestPermissions(missing, REQUEST_GUEST_PERMISSIONS)' "$BRIDGE"
+          grep -q 'permissionsDenied' "$BRIDGE"
+          grep -q 'requiredHostRuntimePermissions' "$RUNTIME"
+          grep -q 'val installed = extras\["installed"\] == true' "$HOST"
+          grep -q 'if (launched || installed)' "$HOST"
+          grep -q 'pendingEngineApk?.absolutePath' "$HOST"
+          echo "Permission preflight and durable library registration verified"
+
       - name: Verify host-helper version contract
         shell: bash
         run: |
@@ -96,10 +123,10 @@ jobs:
           PUBSPEC_CODE="$(awk -F'+' '/^version: / {print $2}' pubspec.yaml)"
           test -n "$HOST_CODE" && test "$HOST_CODE" = "$ENGINE_CODE" && test "$HOST_CODE" = "$PUBSPEC_CODE"
           grep -q 'BuildConfig.VERSION_CODE.toLong()' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
-          grep -q 'com.appcompat.runtime.engine32.v7' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
-          grep -q 'com.appcompat.runtime.engine64.v7' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
-          grep -q 'applicationId "com.appcompat.runtime.engine32.v7"' android/engine/build.gradle
-          grep -q 'applicationId "com.appcompat.runtime.engine64.v7"' android/engine/build.gradle
+          grep -q 'com.appcompat.runtime.engine32.v8' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
+          grep -q 'com.appcompat.runtime.engine64.v8' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
+          grep -q 'applicationId "com.appcompat.runtime.engine32.v8"' android/engine/build.gradle
+          grep -q 'applicationId "com.appcompat.runtime.engine64.v8"' android/engine/build.gradle
           echo "Host/helper version contract verified at versionCode=$HOST_CODE"
 
       - name: Prepare Gradle wrapper
@@ -165,23 +192,20 @@ jobs:
           test -s "$APK"
           zipinfo -1 "$APK" > /tmp/appcompat-smart-files.txt
 
-          # One user-facing APK contains the Flutter host for both common ARM ABIs
-          # plus both signed helper runtimes. The helper chosen at runtime is based
-          # on the imported guest APK's native libraries.
           grep -q '^lib/armeabi-v7a/libflutter.so$' /tmp/appcompat-smart-files.txt
           grep -q '^lib/arm64-v8a/libflutter.so$' /tmp/appcompat-smart-files.txt
           grep -q '^assets/engines/appcompat-engine32.apk$' /tmp/appcompat-smart-files.txt
           grep -q '^assets/engines/appcompat-engine64.apk$' /tmp/appcompat-smart-files.txt
 
           "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose "$APK"
-          cp "$APK" AppCompat-smart-v0.7.0.apk
-          ls -lh AppCompat-smart-v0.7.0.apk
-          sha256sum AppCompat-smart-v0.7.0.apk
+          cp "$APK" AppCompat-smart-v0.8.0.apk
+          ls -lh AppCompat-smart-v0.8.0.apk
+          sha256sum AppCompat-smart-v0.8.0.apk
 
       - name: Upload smart APK
         uses: actions/upload-artifact@v4
         with:
-          name: AppCompat-smart-v0.7.0-apk
-          path: AppCompat-smart-v0.7.0.apk
+          name: AppCompat-smart-v0.8.0-apk
+          path: AppCompat-smart-v0.8.0.apk
           if-no-files-found: error
           retention-days: 14
