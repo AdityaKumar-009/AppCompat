@@ -31,20 +31,17 @@ object EngineBroker {
     const val ACTION_LAST_CRASH = "com.appcompat.runtime.engine.LAST_CRASH"
     const val BRIDGE_CLASS = "com.appcompat.engine.EngineBridgeActivity"
 
-    // v0.6 moves to versioned helper package IDs. Earlier prototype builds used
-    // ephemeral CI debug certificates, so Android may refuse an in-place upgrade
-    // of an already-installed helper even when its versionCode is newer. A fresh
-    // package namespace guarantees this host cannot accidentally execute the v0.4
-    // helper and also avoids UPDATE_INCOMPATIBLE during this migration.
-    private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v6"
-    private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v6"
+    // Keep helper package IDs versioned. A new namespace forces Android to install
+    // the runtime carrying the matching framework-translation code even when an
+    // older helper was signed by a different ephemeral CI certificate.
+    private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v7"
+    private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v7"
     private const val REGISTRY_PREFS = "appcompat_virtual_registry"
     private const val REGISTRY_JSON = "apps"
 
     // The embedded helper APKs intentionally use the same versionCode as the host.
     // Derive the required version from BuildConfig instead of maintaining a second
-    // hard-coded integer. The old hard-coded value allowed a v0.4 helper to be
-    // reused by the v0.5 host, which meant runtime fixes in the new APK never ran.
+    // hard-coded integer so runtime fixes can never silently reuse a stale helper.
     private val requiredEngineVersion: Long
         get() = BuildConfig.VERSION_CODE.toLong()
 
