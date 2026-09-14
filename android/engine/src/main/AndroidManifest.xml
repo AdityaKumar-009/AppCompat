@@ -27,6 +27,28 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
 
+    <!-- Normal legacy capabilities are still checked against the helper's real UID.
+         Old notification/lock-screen utilities commonly acquire wake locks, vibrate,
+         inspect network state, manipulate audio, or use the deprecated keyguard API
+         immediately when their background service is created. Declaring them here
+         prevents a modern helper manifest from accidentally stripping capabilities
+         that the original pre-Oreo APK legitimately declared. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REORDER_TASKS" />
+    <uses-permission android:name="android.permission.GET_TASKS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
     <!-- New permission names are declared even though the helper intentionally has
          a pre-Oreo target. LegacyPermissionCompat selects only the modern grants
          that correspond to what the imported guest actually requested. -->
@@ -55,7 +77,8 @@
 
     <application
         android:name=".EngineApplication"
-        android:label="AppCompat Legacy Runtime v13"
+        android:label="${engineAppLabel}"
+        android:icon="@drawable/appcompat_engine_icon"
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:extractNativeLibs="true"
@@ -72,7 +95,7 @@
 
         <service
             android:name=".NotificationAccessProxyService"
-            android:label="AppCompat Runtime v13 notification access"
+            android:label="${notificationAccessLabel}"
             android:exported="false"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
@@ -82,7 +105,7 @@
 
         <service
             android:name=".LegacyAccessibilityProxyService"
-            android:label="AppCompat Runtime v13 accessibility bridge"
+            android:label="${accessibilityLabel}"
             android:exported="true"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
@@ -95,7 +118,7 @@
 
         <receiver
             android:name=".LegacyDeviceAdminReceiver"
-            android:label="AppCompat Runtime v13 device administrator"
+            android:label="${deviceAdminLabel}"
             android:exported="true"
             android:permission="android.permission.BIND_DEVICE_ADMIN">
             <meta-data
