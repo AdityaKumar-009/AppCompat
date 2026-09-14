@@ -17,8 +17,8 @@ This patch therefore:
    ordinary notification-access list instead;
 3. treats NotificationManager=true OR Settings.Secure containing the exact helper
    component as a real grant;
-4. falls back to queryIntentServices() when legacy PackageInfo(GET_SERVICES) cannot
-   enumerate the guest listener.
+4. falls back to the public BlackBox resolveService() path when legacy
+   PackageInfo(GET_SERVICES) cannot enumerate the guest listener.
 """
 from __future__ import annotations
 
@@ -179,30 +179,27 @@ def patch_compat(root: Path) -> None:
         }
 
         // Rich PackageInfo generation can fail for malformed/very old component
-        // metadata. Intent resolution uses a different package-manager path and is
-        // enough to discover NotificationListenerService implementations reliably.
+        // metadata. BPackageManager's public resolveService() path is independent of
+        // that rich PackageInfo construction and is sufficient for the single
+        // NotificationListenerService used by legacy apps such as Floatify.
         if (out.isEmpty()) {
             try {
                 Intent query = new Intent("android.service.notification.NotificationListenerService");
                 query.setPackage(guestPackage);
-                List<ResolveInfo> resolved = BlackBoxCore.getBPackageManager().queryIntentServices(
-                        query, PackageManager.GET_META_DATA, BlackBoxCore.getUserId());
-                if (resolved != null) {
-                    for (ResolveInfo resolve : resolved) {
-                        ServiceInfo service = resolve == null ? null : resolve.serviceInfo;
-                        if (service == null || service.name == null) continue;
-                        if (NOTIFICATION_LISTENER_PERMISSION.equals(service.permission)) {
-                            ComponentName component = new ComponentName(guestPackage, service.name);
-                            if (!out.contains(component)) out.add(component);
-                        }
-                    }
+                ResolveInfo resolved = BlackBoxCore.getBPackageManager().resolveService(
+                        query, PackageManager.GET_META_DATA, null, BlackBoxCore.getUserId());
+                ServiceInfo service = resolved == null ? null : resolved.serviceInfo;
+                if (service != null && service.name != null
+                        && NOTIFICATION_LISTENER_PERMISSION.equals(service.permission)) {
+                    ComponentName component = new ComponentName(guestPackage, service.name);
+                    if (!out.contains(component)) out.add(component);
                 }
             } catch (Throwable ignored) {
             }
         }
         return out;
     }'''
-    text = replace_once(text, old_components, new_components, "fallback listener discovery via queryIntentServices")
+    text = replace_once(text, old_components, new_components, "fallback listener discovery via public resolveService")
 
     path.write_text(text, encoding="utf-8")
 
@@ -216,7 +213,7 @@ def verify(root: Path) -> None:
         'manufacturer.contains("xiaomi")',
         "if (manager.isNotificationListenerAccessGranted(proxy))",
         "Settings.Secure.getString",
-        "queryIntentServices(",
+        "getBPackageManager().resolveService(",
         "android.service.notification.NotificationListenerService",
         "import android.content.pm.ResolveInfo;",
     )
@@ -225,6 +222,8 @@ def verify(root: Path) -> None:
             raise SystemExit(f"[notification-settings-oem] verification failed: {invariant}")
     if "detail.putExtra(EXTRA_NOTIFICATION_LISTENER_COMPONENT, proxy);" in text:
         raise SystemExit("[notification-settings-oem] raw ComponentName detail extra still present")
+    if "getBPackageManager().queryIntentServices(" in text:
+        raise SystemExit("[notification-settings-oem] unsupported public queryIntentServices call remains")
     print("[notification-settings-oem] notification Settings + grant detection verified")
 
 
