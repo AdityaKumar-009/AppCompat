@@ -179,9 +179,11 @@ def patch_compat(root: Path) -> None:
         }
 
         // Rich PackageInfo generation can fail for malformed/very old component
-        // metadata. BPackageManager's public resolveService() path is independent of
-        // that rich PackageInfo construction and is sufficient for the single
-        // NotificationListenerService used by legacy apps such as Floatify.
+        // metadata. Do not call queryIntentServices( through BPackageManager: that
+        // method exists on the Binder service but is not exposed by this pinned
+        // client's public wrapper. resolveService() is public and independent of
+        // rich PackageInfo construction, and legacy apps such as Floatify expose a
+        // single NotificationListenerService.
         if (out.isEmpty()) {
             try {
                 Intent query = new Intent("android.service.notification.NotificationListenerService");
