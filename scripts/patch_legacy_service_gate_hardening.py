@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """Harden post-EULA legacy special-access and service-discovery gates.
 
-Old utilities commonly advance from an EULA directly into two APIs that modern
-Android virtualisation engines must represent truthfully:
+Old utilities commonly advance from an EULA directly into APIs that modern Android
+virtualisation engines must represent truthfully:
 
 * Settings.canDrawOverlays() ultimately asks AppOps about SYSTEM_ALERT_WINDOW.
-  AppCompat already translates special AppOps onto the helper identity, but the
-  original bridge re-queries ServiceManager through getWho() after the appops Binder
-  has been replaced by our proxy. On modern releases that can resolve back to the
-  proxy itself. Route special-access checks through BinderInvocationStub's preserved
-  original base interface instead, and recognize OP_SYSTEM_ALERT_WINDOW numerically
-  even if hidden AppOps name reflection is unavailable on a vendor build.
+  Route special-access checks through BinderInvocationStub's preserved original base
+  interface and recognize OP_SYSTEM_ALERT_WINDOW numerically so vendor-hidden AppOps
+  naming APIs cannot make the check recurse through our own proxy.
 * ActivityManager.getRunningServices() is deprecated/restricted on modern Android.
-  BlackBox already owns authoritative virtual service records, so synthesize the
-  guest-facing RunningServiceInfo list directly from those records instead of asking
-  the host ActivityManager and trying to map host PIDs back afterward.
+  BlackBox owns authoritative virtual service records, so synthesize the guest-facing
+  RunningServiceInfo list from those records.
+* Old notification utilities often treat "my NotificationListenerService is listed by
+  getRunningServices()" as their grant test. Android grants AppCompat's real proxy,
+  not the virtual service, and the proxy callback is asynchronous. Once the helper's
+  real notification-listener grant exists, expose the guest listener as logically
+  running immediately. This removes the post-Settings race without fabricating the
+  grant itself.
 
 There are intentionally no package-name checks for any particular guest app.
 """
@@ -58,9 +60,6 @@ def patch_truthful_overlay_appops(root: Path) -> None:
     )
     text = path.read_text(encoding="utf-8")
 
-    # patch_special_access_translation.py has already inserted this branch. Keep its
-    # generic special-access classifier, but make the overlay gate independent of
-    # hidden op-name reflection and invoke the preserved original Binder interface.
     old = '''        if (LegacySpecialAccessCompat.isSpecialAccessAppOp(args)) {
             MethodParameterUtils.replaceAllAppPkg(args);
             MethodParameterUtils.replaceFirstUid(args);
@@ -75,9 +74,7 @@ def patch_truthful_overlay_appops(root: Path) -> None:
             try {
                 // getWho() re-queries ServiceManager after this Binder service has
                 // been replaced and can therefore resolve back into this proxy.
-                // getBase() is the original IAppOpsService captured by
-                // BinderInvocationStub before injection, so this crosses to the real
-                // Android service exactly once instead of recursively re-entering us.
+                // getBase() is the original IAppOpsService captured before injection.
                 Object result = method.invoke(getBase(), args);
                 if (containsSystemAlertWindowOp(args)) {
                     Slog.d(TAG, "SYSTEM_ALERT_WINDOW AppOps delegated to original helper Binder: "
@@ -100,8 +97,7 @@ def patch_truthful_overlay_appops(root: Path) -> None:
     marker = '''    @Override
     public boolean isBadEnv() {'''
     helper = '''    // AppOpsManager.OP_SYSTEM_ALERT_WINDOW is stable framework op 24. Use the
-    // numeric value here because opToName/opToPublicName can be hidden or vendor-
-    // restricted even though Settings.canDrawOverlays() still sends the integer op.
+    // numeric value because opToName/opToPublicName can be hidden on vendor builds.
     private static boolean containsSystemAlertWindowOp(Object[] args) {
         if (args == null) return false;
         for (Object arg : args) {
@@ -136,8 +132,7 @@ def patch_virtual_running_services(root: Path) -> None:
 
         // mRunningServiceRecords is the authoritative virtual service registry.
         // Do not depend on ActivityManager#getRunningServices(): modern Android
-        // intentionally restricts/deprecates that host query and the host proxy PID
-        // is not required to answer a guest asking about its own virtual services.
+        // intentionally restricts/deprecates that host query.
         synchronized (mRunningServiceRecords) {
             for (RunningServiceRecord value : mRunningServiceRecords.values()) {
                 if (value == null || value.mServiceInfo == null) {
@@ -160,12 +155,48 @@ def patch_virtual_running_services(root: Path) -> None:
                 running.service = new ComponentName(serviceInfo.packageName, serviceInfo.name);
                 running.process = processRecord.processName;
                 running.pid = processRecord.pid;
-                // Expose the guest-facing BlackBox UID rather than the helper's real
-                // Android UID, matching the rest of the virtual package identity.
                 running.uid = processRecord.buid;
                 running.started = value.mStartId.get() > 0;
                 running.clientCount = value.mBindCount.get();
                 info.mRunningServiceInfoList.add(running);
+            }
+        }
+
+        // NotificationListenerService access is component-based and Android only
+        // knows the real helper proxy. Legacy apps (including many pre-Oreo tools)
+        // used getRunningServices() as their permission detector. Once the *real*
+        // helper listener is granted, expose the matching virtual listener as
+        // logically running immediately, even before its first callback creates a
+        // concrete RunningServiceRecord. The grant remains truthful: this branch is
+        // unreachable until LegacySpecialAccessCompat verifies the host grant.
+        if (callerPackage != null
+                && top.niunaijun.blackbox.utils.compat.LegacySpecialAccessCompat
+                        .isNotificationListenerAccessGrantedForGuest(callerPackage)) {
+            List<ComponentName> listeners =
+                    top.niunaijun.blackbox.utils.compat.LegacySpecialAccessCompat
+                            .notificationListenerGuestComponents();
+            for (ComponentName component : listeners) {
+                if (component == null || !callerPackage.equals(component.getPackageName())) {
+                    continue;
+                }
+                boolean exists = false;
+                for (ActivityManager.RunningServiceInfo current : info.mRunningServiceInfoList) {
+                    if (current != null && component.equals(current.service)) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (exists) continue;
+
+                ActivityManager.RunningServiceInfo logical =
+                        new ActivityManager.RunningServiceInfo();
+                logical.service = component;
+                logical.process = callerPackage;
+                logical.pid = 0;
+                logical.uid = BlackBoxCore.getBUid();
+                logical.started = true;
+                logical.clientCount = 0;
+                info.mRunningServiceInfoList.add(logical);
             }
         }
         return info;
@@ -173,7 +204,7 @@ def patch_virtual_running_services(root: Path) -> None:
 
     text = replace_between(
         text, start, end, replacement,
-        "synthesize running services from virtual registry",
+        "synthesize running services and granted notification listeners",
     )
     path.write_text(text, encoding="utf-8")
 
@@ -195,7 +226,10 @@ def verify(root: Path) -> None:
         (appops, "SYSTEM_ALERT_WINDOW AppOps delegated to original helper Binder"),
         (services, "new ActivityManager.RunningServiceInfo()"),
         (services, "running.service = new ComponentName(serviceInfo.packageName, serviceInfo.name)"),
-        (services, "running.uid = processRecord.buid"),
+        (services, "isNotificationListenerAccessGrantedForGuest(callerPackage)"),
+        (services, "notificationListenerGuestComponents()"),
+        (services, "logical.service = component"),
+        (services, "logical.uid = BlackBoxCore.getBUid()"),
     ]
     for source, invariant in required:
         if invariant not in source:
