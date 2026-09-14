@@ -28,6 +28,11 @@ android {
         arm32 {
             dimension "runtime"
             applicationId "com.appcompat.runtime.engine32.v13"
+            // r2 intentionally changes the installed helper package. Earlier v13
+            // builds may remain on the device and may also have been signed by a
+            // different CI debug certificate. A fresh package guarantees the host
+            // actually runs this patched engine instead of silently reusing r1.
+            applicationIdSuffix ".r2"
             ndk {
                 abiFilters "armeabi-v7a"
             }
@@ -36,6 +41,7 @@ android {
         arm64 {
             dimension "runtime"
             applicationId "com.appcompat.runtime.engine64.v13"
+            applicationIdSuffix ".r2"
             ndk {
                 abiFilters "arm64-v8a"
             }
