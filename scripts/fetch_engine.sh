@@ -70,6 +70,7 @@ python3 "$ROOT/scripts/patch_universal_legacy_runtime.py" "$DEST"
 # helper token and system-provider ContentObserver registration/notifyChange reaches
 # Android instead of reporting success while doing nothing.
 python3 "$ROOT/scripts/patch_universal_semantic_noops.py" "$DEST"
+python3 "$ROOT/scripts/patch_universal_runtime_hardening.py" "$DEST"
 python3 "$ROOT/scripts/patch_sdk_gate_calls.py" "$DEST"
 
 echo "Prepared patched compatibility engine $ENGINE_COMMIT"
