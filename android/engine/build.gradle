@@ -13,25 +13,30 @@ android {
         // The helper is the real Android UID/package behind virtual guests. Android
         // applies many compatibility decisions to this targetSdk, not to the guest
         // manifest BlackBox exposes in-process. API 25 is intentionally the newest
-        // pre-Oreo profile. v13 replaces v12's raw DEX string mutation with a
-        // structural dexlib2 rewrite, preserving sorted identifier tables and ART
-        // loadability while guest bytecode sees the API-25 Build.VERSION shim.
+        // pre-Oreo profile. v13 uses structural dexlib2 rewriting so guest bytecode
+        // sees the API-25 Build.VERSION shim without corrupting DEX identifier order.
         targetSdk 25
         versionCode 13
         versionName "0.13.0"
         multiDexEnabled true
         buildConfigField "int", "COMPAT_PROFILE_TARGET_SDK", "25"
+        manifestPlaceholders = [
+            engineAppLabel: "AppCompat Legacy Runtime v13",
+            notificationAccessLabel: "AppCompat Runtime v13 notification access",
+            accessibilityLabel: "AppCompat Runtime v13 accessibility bridge",
+            deviceAdminLabel: "AppCompat Runtime v13 device administrator"
+        ]
     }
 
-    flavorDimensions += "runtime"
+    // `runtime` selects the CPU ABI. `guest` optionally gives a legacy app its own
+    // real Android permission principal. Android 11+ intentionally forces overlay
+    // requests to a top-level app list, so a Floatify-specific helper is labeled
+    // "Floatify" there instead of asking users to guess among AppCompat runtimes.
+    flavorDimensions += ["runtime", "guest"]
     productFlavors {
         arm32 {
             dimension "runtime"
             applicationId "com.appcompat.runtime.engine32.v13"
-            // r3 intentionally changes the installed helper package again. The r2
-            // build reached Floatify's EULA but exposed the next AppOps/service gate
-            // bugs; a fresh package guarantees this corrected engine is used instead
-            // of silently reusing the helper already installed on the test device.
             applicationIdSuffix ".r3"
             ndk {
                 abiFilters "armeabi-v7a"
@@ -46,6 +51,22 @@ android {
                 abiFilters "arm64-v8a"
             }
             buildConfigField "int", "ENGINE_BITS", "64"
+        }
+
+        generic {
+            dimension "guest"
+        }
+        floatify {
+            dimension "guest"
+            // Separate real package/UID means Android's overlay + notification-access
+            // screens can identify the permission principal by the guest's name.
+            applicationIdSuffix ".floatify"
+            manifestPlaceholders = [
+                engineAppLabel: "Floatify",
+                notificationAccessLabel: "Floatify",
+                accessibilityLabel: "Floatify accessibility bridge",
+                deviceAdminLabel: "Floatify device administrator"
+            ]
         }
     }
 
