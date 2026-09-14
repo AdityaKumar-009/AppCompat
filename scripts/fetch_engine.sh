@@ -27,6 +27,11 @@ python3 "$ROOT/scripts/patch_framework_translation_hardening.py" "$DEST"
 python3 "$ROOT/scripts/patch_permission_translation.py" "$DEST"
 python3 "$ROOT/scripts/patch_special_access_translation.py" "$DEST"
 python3 "$ROOT/scripts/patch_special_access_oem_hardening.py" "$DEST"
+# Vendor Settings can resolve the Android 11+ notification-listener detail action
+# yet still crash on an OEM-specific implementation. Match Android's flattened-
+# string extra contract, avoid the fragile detail surface on Xiaomi-family builds,
+# and make grant detection tolerant of OEM framework/secure-setting timing.
+python3 "$ROOT/scripts/patch_notification_settings_miui_hardening.py" "$DEST"
 python3 "$ROOT/scripts/patch_special_access_service_attribution.py" "$DEST"
 python3 "$ROOT/scripts/patch_system_component_translation.py" "$DEST"
 python3 "$ROOT/scripts/patch_guest_sdk_identity.py" "$DEST"
