@@ -138,12 +138,16 @@ def verify(root: Path) -> None:
         if needle not in am:
             raise SystemExit(f"[semantic-noops] verification failed: {needle}")
     for needle in (
-        "restore",  # source comments make accidental no-op regression obvious
         "MethodParameterUtils.replaceAllAppPkg(args);",
         "return method.invoke(who, args);",
+        "unsupportedVirtualAuthority",
     ):
         if needle not in content:
             raise SystemExit(f"[semantic-noops] content observer verification failed: {needle}")
+    if '''@ProxyMethod("registerContentObserver")\n    public static class RegisterContentObserver extends MethodHook {\n        @Override\n        protected Object hook(Object who, Method method, Object[] args) throws Throwable {\n            return 0;''' in content:
+        raise SystemExit("[semantic-noops] registerContentObserver no-op remains")
+    if '''@ProxyMethod("notifyChange")\n    public static class NotifyChange extends MethodHook {\n        @Override\n        protected Object hook(Object who, Method method, Object[] args) throws Throwable {\n            return 0;''' in content:
+        raise SystemExit("[semantic-noops] notifyChange no-op remains")
     print("[semantic-noops] PendingIntent.send + system content-observer semantics verified")
 
 
