@@ -17,7 +17,10 @@ android {
         // sees the API-25 Build.VERSION shim without corrupting DEX identifier order.
         targetSdk 25
         versionCode 13
-        versionName "0.13.0"
+        // Keep versionCode aligned with the public v13 host, but use versionName as
+        // an internal payload revision. The host checks both values so a device that
+        // already has an older r4 helper is updated in-place to the universal engine.
+        versionName "0.13.1-universal"
         multiDexEnabled true
         buildConfigField "int", "COMPAT_PROFILE_TARGET_SDK", "25"
         manifestPlaceholders = [
@@ -37,9 +40,8 @@ android {
         arm32 {
             dimension "runtime"
             applicationId "com.appcompat.runtime.engine32.v13"
-            // r4 forces a genuinely fresh helper after fixing Xiaomi/MIUI notification
-            // access routing and OEM grant detection. Reusing r3 would leave the old
-            // Settings intent code installed because the public versionCode stays 13.
+            // r4 is retained as the package/UID so existing user grants survive the
+            // universal update; versionName now forces the actual helper APK refresh.
             applicationIdSuffix ".r4"
             ndk {
                 abiFilters "armeabi-v7a"
