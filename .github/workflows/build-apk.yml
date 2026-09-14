@@ -98,6 +98,7 @@ jobs:
           BRIDGE="android/engine/src/main/kotlin/com/appcompat/engine/EngineBridgeActivity.kt"
           RUNTIME="android/engine/src/main/kotlin/com/appcompat/engine/EngineRuntime.kt"
           HOST="android/app/src/main/kotlin/com/appcompat/runtime/MainActivity.kt"
+          MANIFEST="android/engine/src/main/AndroidManifest.xml"
 
           test -s "$PERMISSION_COMPAT"
           grep -q 'requiredHostRuntimePermissions' "$PERMISSION_COMPAT"
@@ -111,8 +112,12 @@ jobs:
           grep -q 'requiredHostRuntimePermissions' "$RUNTIME"
           grep -q 'val installed = extras\["installed"\] == true' "$HOST"
           grep -q 'registerPendingGuestIfInstalled(launched, installed)' "$HOST"
-          grep -q 'pendingEngineApk?.absolutePath' "$HOST"
-          echo "Permission preflight and durable library registration verified"
+          grep -q 'EngineBroker.ensureInstalled(this, bits, pendingEnginePackage)' "$HOST"
+          grep -q 'android.permission.WAKE_LOCK' "$MANIFEST"
+          grep -q 'android.permission.VIBRATE' "$MANIFEST"
+          grep -q 'android.permission.DISABLE_KEYGUARD' "$MANIFEST"
+          grep -q 'android.permission.MODIFY_AUDIO_SETTINGS' "$MANIFEST"
+          echo "Permission preflight, legacy normal permissions and durable registration verified"
 
       - name: Verify special access and structural guest DEX translation
         shell: bash
@@ -129,6 +134,7 @@ jobs:
           NOTIFICATION="$ROOT/fake/service/INotificationManagerProxy.java"
           APPOPS="$ROOT/fake/service/IAppOpsManagerProxy.java"
           SERVICES="$ROOT/app/dispatcher/AppServiceDispatcher.java"
+          ACTIVE_SERVICES="$ROOT/core/system/am/ActiveServices.java"
           DEVICEPOLICY="$ROOT/fake/service/IDevicePolicyManagerProxy.java"
           USAGE="$ROOT/fake/service/IUsageStatsManagerProxy.java"
           MEDIA="$ROOT/fake/service/IMediaSessionManagerProxy.java"
@@ -151,12 +157,17 @@ jobs:
           grep -q 'IsNotificationListenerAccessGranted' "$NOTIFICATION"
           grep -q 'isSpecialAccessAppOp' "$APPOPS"
           grep -q 'dispatchSpecialAccessCallback' "$SERVICES"
+          grep -q 'ensureNotificationListenerConnected' "$SERVICES"
+          grep -q 'mNotificationListenerConnected' "$SERVICES"
+          grep -q 'isNotificationListenerAccessGrantedForGuest(callerPackage)' "$ACTIVE_SERVICES"
+          grep -q 'notificationListenerGuestComponents' "$ACTIVE_SERVICES"
           grep -q 'dispatchSystemComponentCallback' "$SERVICES"
           grep -q 'isDeviceAdminActiveForGuest' "$DEVICEPOLICY"
           grep -q 'replaceAllAppPkg' "$USAGE"
           grep -q 'addInjector(new IUsageStatsManagerProxy())' "$HOOKS"
           grep -q 'NotificationListenerIdentity' "$MEDIA"
-          grep -q 'activeNotifications?.toList().orEmpty()' "$PROXY"
+          grep -q 'guest listeners remain lazy' "$PROXY"
+          ! grep -q 'activeNotifications?.toList().orEmpty()' "$PROXY"
           grep -q 'TYPE_APPLICATION_OVERLAY' "$WINDOW"
 
           # v13 regression guards for the exact Floatify SettingsHome failure.
@@ -176,7 +187,7 @@ jobs:
           grep -q 'android.permission.BIND_NOTIFICATION_LISTENER_SERVICE' "$MANIFEST"
           grep -q 'android.permission.BIND_ACCESSIBILITY_SERVICE' "$MANIFEST"
           grep -q 'android.permission.BIND_DEVICE_ADMIN' "$MANIFEST"
-          echo "Special-access + structural guest-Dex translation verified"
+          echo "Special-access, lazy listener lifecycle and structural guest-Dex translation verified"
 
       - name: Verify host-helper v13 contract
         shell: bash
@@ -190,13 +201,13 @@ jobs:
           grep -q 'targetSdk 25' android/engine/build.gradle
           grep -q 'COMPAT_PROFILE_TARGET_SDK.*25' android/engine/build.gradle
           grep -q 'BuildConfig.VERSION_CODE.toLong()' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
-          grep -q 'com.appcompat.runtime.engine32.v13' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
-          grep -q 'com.appcompat.runtime.engine64.v13' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
-          grep -q 'applicationId "com.appcompat.runtime.engine32.v13"' android/engine/build.gradle
-          grep -q 'applicationId "com.appcompat.runtime.engine64.v13"' android/engine/build.gradle
-          grep -q 'com.appcompat.runtime.engine32.v13' android/app/src/main/AndroidManifest.xml
-          grep -q 'com.appcompat.runtime.engine64.v13' android/app/src/main/AndroidManifest.xml
-          echo "Host/helper v13 contract verified at versionCode=$HOST_CODE"
+          grep -q 'FLOATIFY_GUEST_PACKAGE = "com.jamworks.floatify"' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
+          grep -q 'FLOATIFY_HELPER_SUFFIX = ".floatify"' android/app/src/main/kotlin/com/appcompat/runtime/EngineBroker.kt
+          grep -q 'applicationIdSuffix ".floatify"' android/engine/build.gradle
+          grep -q 'engineAppLabel: "Floatify"' android/engine/build.gradle
+          grep -q 'com.appcompat.runtime.engine32.v13.r3.floatify' android/app/src/main/AndroidManifest.xml
+          grep -q 'com.appcompat.runtime.engine64.v13.r3.floatify' android/app/src/main/AndroidManifest.xml
+          echo "Host/helper v13 contract verified with guest-named Floatify permission principals"
 
       - name: Build guest API-25 identity shim
         shell: bash
@@ -243,36 +254,49 @@ jobs:
       - name: Static analysis
         run: flutter analyze
 
-      - name: Build ABI-isolated helper runtimes
+      - name: Build ABI-isolated generic and Floatify helper runtimes
         working-directory: android
-        run: ./gradlew :engine:assembleArm32Release :engine:assembleArm64Release --no-daemon --stacktrace
+        run: ./gradlew :engine:assembleRelease --no-daemon --stacktrace
 
       - name: Verify and embed helper runtimes
         shell: bash
         run: |
           set -euo pipefail
-          ARM32="$(find build/engine/outputs/apk -type f -name '*arm32*release*.apk' | head -n 1)"
-          ARM64="$(find build/engine/outputs/apk -type f -name '*arm64*release*.apk' | head -n 1)"
-          test -n "$ARM32" && test -s "$ARM32"
-          test -n "$ARM64" && test -s "$ARM64"
+          find build/engine/outputs/apk -type f -name '*.apk' -print | sort
 
-          zipinfo -1 "$ARM32" > /tmp/engine32-files.txt
-          zipinfo -1 "$ARM64" > /tmp/engine64-files.txt
-          grep -q '^lib/armeabi-v7a/libblackbox.so$' /tmp/engine32-files.txt
-          ! grep -q '^lib/arm64-v8a/' /tmp/engine32-files.txt
-          grep -q '^lib/arm64-v8a/libblackbox.so$' /tmp/engine64-files.txt
-          ! grep -q '^lib/armeabi-v7a/' /tmp/engine64-files.txt
-          grep -q '^assets/compat/legacy-build-shim.dex$' /tmp/engine32-files.txt
-          grep -q '^assets/compat/legacy-build-shim.dex$' /tmp/engine64-files.txt
+          ARM32="$(find build/engine/outputs/apk -type f -name '*.apk' | grep -Ei 'arm32.*generic.*release' | head -n 1)"
+          ARM64="$(find build/engine/outputs/apk -type f -name '*.apk' | grep -Ei 'arm64.*generic.*release' | head -n 1)"
+          FLOAT32="$(find build/engine/outputs/apk -type f -name '*.apk' | grep -Ei 'arm32.*floatify.*release' | head -n 1)"
+          FLOAT64="$(find build/engine/outputs/apk -type f -name '*.apk' | grep -Ei 'arm64.*floatify.*release' | head -n 1)"
 
-          "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "$ARM32" | grep -q "targetSdkVersion:'25'"
-          "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "$ARM64" | grep -q "targetSdkVersion:'25'"
-          "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify "$ARM32"
-          "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify "$ARM64"
+          for apk in "$ARM32" "$ARM64" "$FLOAT32" "$FLOAT64"; do
+            test -n "$apk" && test -s "$apk"
+            "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify "$apk"
+            "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "$apk" | grep -q "targetSdkVersion:'25'"
+            zipinfo -1 "$apk" | grep -q '^assets/compat/legacy-build-shim.dex$'
+          done
+
+          zipinfo -1 "$ARM32" | grep -q '^lib/armeabi-v7a/libblackbox.so$'
+          ! zipinfo -1 "$ARM32" | grep -q '^lib/arm64-v8a/'
+          zipinfo -1 "$ARM64" | grep -q '^lib/arm64-v8a/libblackbox.so$'
+          ! zipinfo -1 "$ARM64" | grep -q '^lib/armeabi-v7a/'
+          zipinfo -1 "$FLOAT32" | grep -q '^lib/armeabi-v7a/libblackbox.so$'
+          ! zipinfo -1 "$FLOAT32" | grep -q '^lib/arm64-v8a/'
+          zipinfo -1 "$FLOAT64" | grep -q '^lib/arm64-v8a/libblackbox.so$'
+          ! zipinfo -1 "$FLOAT64" | grep -q '^lib/armeabi-v7a/'
+
+          "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "$ARM32" | grep -q "package: name='com.appcompat.runtime.engine32.v13.r3'"
+          "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "$ARM64" | grep -q "package: name='com.appcompat.runtime.engine64.v13.r3'"
+          "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "$FLOAT32" | grep -q "package: name='com.appcompat.runtime.engine32.v13.r3.floatify'"
+          "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "$FLOAT64" | grep -q "package: name='com.appcompat.runtime.engine64.v13.r3.floatify'"
+          "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "$FLOAT32" | grep -q "application-label:'Floatify'"
+          "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "$FLOAT64" | grep -q "application-label:'Floatify'"
 
           mkdir -p android/app/src/main/assets/engines
           cp "$ARM32" android/app/src/main/assets/engines/appcompat-engine32.apk
           cp "$ARM64" android/app/src/main/assets/engines/appcompat-engine64.apk
+          cp "$FLOAT32" android/app/src/main/assets/engines/floatify-engine32.apk
+          cp "$FLOAT64" android/app/src/main/assets/engines/floatify-engine64.apk
           ls -lh android/app/src/main/assets/engines/*.apk
 
       - name: Build one smart multi-ABI APK
@@ -290,6 +314,8 @@ jobs:
           grep -q '^lib/arm64-v8a/libflutter.so$' /tmp/appcompat-smart-files.txt
           grep -q '^assets/engines/appcompat-engine32.apk$' /tmp/appcompat-smart-files.txt
           grep -q '^assets/engines/appcompat-engine64.apk$' /tmp/appcompat-smart-files.txt
+          grep -q '^assets/engines/floatify-engine32.apk$' /tmp/appcompat-smart-files.txt
+          grep -q '^assets/engines/floatify-engine64.apk$' /tmp/appcompat-smart-files.txt
 
           "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose "$APK"
           cp "$APK" AppCompat-smart-v0.13.0.apk
