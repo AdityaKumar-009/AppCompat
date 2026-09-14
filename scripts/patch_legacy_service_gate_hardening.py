@@ -5,12 +5,12 @@ Old utilities commonly advance from an EULA directly into two APIs that modern
 Android virtualisation engines must represent truthfully:
 
 * Settings.canDrawOverlays() ultimately asks AppOps about SYSTEM_ALERT_WINDOW.
-  The pinned engine historically returned MODE_ALLOWED for every check/note/start
-  AppOps call.  Besides being untruthful, that is type-unsafe on newer Android where
-  some note/start calls return objects rather than an int.  For the overlay gate,
-  delegate the check to the real system AppOps service using the helper package/UID.
-  Android Settings then remains the source of truth and can grant the capability to
-  the real helper package that actually owns windows.
+  AppCompat already translates special AppOps onto the helper identity, but the
+  original bridge re-queries ServiceManager through getWho() after the appops Binder
+  has been replaced by our proxy. On modern releases that can resolve back to the
+  proxy itself. Route special-access checks through BinderInvocationStub's preserved
+  original base interface instead, and recognize OP_SYSTEM_ALERT_WINDOW numerically
+  even if hidden AppOps name reflection is unavailable on a vendor build.
 * ActivityManager.getRunningServices() is deprecated/restricted on modern Android.
   BlackBox already owns authoritative virtual service records, so synthesize the
   guest-facing RunningServiceInfo list directly from those records instead of asking
@@ -22,6 +22,19 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+
+
+def replace_once(text: str, old: str, new: str, label: str) -> str:
+    count = text.count(old)
+    if count == 0:
+        if new in text:
+            print(f"[legacy-service-gate] {label}: already applied")
+            return text
+        raise SystemExit(f"[legacy-service-gate] {label}: source pattern not found")
+    if count != 1:
+        raise SystemExit(f"[legacy-service-gate] {label}: expected one match, found {count}")
+    print(f"[legacy-service-gate] {label}: applied")
+    return text.replace(old, new, 1)
 
 
 def replace_between(text: str, start: str, end: str, replacement: str, label: str) -> str:
@@ -45,120 +58,67 @@ def patch_truthful_overlay_appops(root: Path) -> None:
     )
     text = path.read_text(encoding="utf-8")
 
-    if "import java.lang.reflect.InvocationTargetException;" not in text:
-        text = text.replace(
-            "import java.lang.reflect.Method;",
-            "import java.lang.reflect.Method;\nimport java.lang.reflect.InvocationTargetException;",
-            1,
-        )
-
-    start = '''    @Override
-    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {'''
-    end = '''    @Override
-    public boolean isBadEnv() {'''
-    replacement = '''    @Override
-    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-        String methodName = method.getName();
-
-        // SYSTEM_ALERT_WINDOW is a real special-app-access grant owned by the
-        // helper package/UID. Never fabricate MODE_ALLOWED for this gate: doing so
-        // makes a legacy app skip Android's overlay consent screen and immediately
-        // attempt later onboarding/service work under a permission it does not have.
-        if (methodName.startsWith("check") && containsSystemAlertWindowOp(args)) {
-            rewriteSpecialAccessIdentity(args);
-            try {
-                Object result = method.invoke(getBase(), args);
-                Slog.d(TAG, "Delegating SYSTEM_ALERT_WINDOW AppOps check to real helper: "
-                        + methodName + " -> " + result);
-                return result;
-            } catch (Throwable failure) {
-                Throwable cause = unwrapInvocationFailure(failure);
-                Slog.w(TAG, "Real SYSTEM_ALERT_WINDOW AppOps check failed for "
-                        + methodName + "; reporting denied", cause);
-                // All current check* AppOps entry points used for OP_SYSTEM_ALERT_WINDOW
-                // return an int mode. Reporting MODE_ERRORED is safer than lying that
-                // the grant exists and lets Settings.canDrawOverlays() return false.
-                return AppOpsManager.MODE_ERRORED;
-            }
-        }
-
-        // Preserve the pinned engine's compatibility policy for unrelated AppOps.
-        // This branch is intentionally after the truthful overlay gate above.
-        if (methodName.startsWith("check") ||
-            methodName.startsWith("note") ||
-            methodName.startsWith("start")) {
-            Slog.d(TAG, "AppOps invoke: Bypassing system for " + methodName + ", allowing operation");
-            return AppOpsManager.MODE_ALLOWED;
-        }
-
-        if (methodName.startsWith("finish")) {
-            Slog.d(TAG, "AppOps invoke: Bypassing system for " + methodName);
-            return null;
-        }
-
-        try {
-            MethodParameterUtils.replaceFirstAppPkg(args);
+    # patch_special_access_translation.py has already inserted this branch. Keep its
+    # generic special-access classifier, but make the overlay gate independent of
+    # hidden op-name reflection and invoke the preserved original Binder interface.
+    old = '''        if (LegacySpecialAccessCompat.isSpecialAccessAppOp(args)) {
+            MethodParameterUtils.replaceAllAppPkg(args);
+            MethodParameterUtils.replaceFirstUid(args);
             MethodParameterUtils.replaceLastUid(args);
-            return super.invoke(proxy, method, args);
-        } catch (SecurityException e) {
-            Slog.w(TAG, "AppOps invoke: SecurityException caught for " + methodName + ", allowing operation", e);
-            return AppOpsManager.MODE_ALLOWED;
-        } catch (Exception e) {
-            Slog.e(TAG, "AppOps invoke: Error in method " + methodName, e);
-            return AppOpsManager.MODE_ALLOWED;
-        }
-    }
+            return method.invoke(getWho(), args);
+        }'''
+    new = '''        if (containsSystemAlertWindowOp(args)
+                || LegacySpecialAccessCompat.isSpecialAccessAppOp(args)) {
+            MethodParameterUtils.replaceAllAppPkg(args);
+            MethodParameterUtils.replaceFirstUid(args);
+            MethodParameterUtils.replaceLastUid(args);
+            try {
+                // getWho() re-queries ServiceManager after this Binder service has
+                // been replaced and can therefore resolve back into this proxy.
+                // getBase() is the original IAppOpsService captured by
+                // BinderInvocationStub before injection, so this crosses to the real
+                // Android service exactly once instead of recursively re-entering us.
+                Object result = method.invoke(getBase(), args);
+                if (containsSystemAlertWindowOp(args)) {
+                    Slog.d(TAG, "SYSTEM_ALERT_WINDOW AppOps delegated to original helper Binder: "
+                            + methodName + " -> " + result);
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException failure) {
+                Throwable cause = failure.getCause();
+                if (cause != null) throw cause;
+                throw failure;
+            }
+        }'''
+    text = replace_once(
+        text,
+        old,
+        new,
+        "route special AppOps through original Binder base",
+    )
 
+    marker = '''    @Override
+    public boolean isBadEnv() {'''
+    helper = '''    // AppOpsManager.OP_SYSTEM_ALERT_WINDOW is stable framework op 24. Use the
+    // numeric value here because opToName/opToPublicName can be hidden or vendor-
+    // restricted even though Settings.canDrawOverlays() still sends the integer op.
     private static boolean containsSystemAlertWindowOp(Object[] args) {
         if (args == null) return false;
         for (Object arg : args) {
-            if (arg instanceof Integer
-                    && ((Integer) arg).intValue() == AppOpsManager.OP_SYSTEM_ALERT_WINDOW) {
+            if (arg instanceof Integer && ((Integer) arg).intValue() == 24) {
                 return true;
             }
         }
         return false;
     }
 
-    private static void rewriteSpecialAccessIdentity(Object[] args) {
-        if (args == null) return;
-        String guestPackage = null;
-        try {
-            guestPackage = BActivityThread.getAppPackageName();
-        } catch (Throwable ignored) {
-        }
-        String hostPackage = BlackBoxCore.getHostPkg();
-        int guestUid = BlackBoxCore.getBUid();
-        int hostUid = BlackBoxCore.getHostUid();
+'''
+    if "private static boolean containsSystemAlertWindowOp" not in text:
+        if marker not in text:
+            raise SystemExit("[legacy-service-gate] AppOps helper insertion point not found")
+        text = text.replace(marker, helper + marker, 1)
+        print("[legacy-service-gate] deterministic overlay AppOps classifier: applied")
 
-        for (int i = 0; i < args.length; i++) {
-            Object arg = args[i];
-            if (arg instanceof String && guestPackage != null
-                    && guestPackage.equals(arg) && hostPackage != null) {
-                args[i] = hostPackage;
-            } else if (arg instanceof Integer && guestUid > 0 && hostUid > 0
-                    && ((Integer) arg).intValue() == guestUid) {
-                // Newer AppOps signatures can carry additional integer fields after
-                // uid (for example device identifiers). Replace by value, not by
-                // positional guesses, so those fields remain untouched.
-                args[i] = hostUid;
-            }
-        }
-    }
-
-    private static Throwable unwrapInvocationFailure(Throwable failure) {
-        Throwable current = failure;
-        while (current instanceof InvocationTargetException
-                && ((InvocationTargetException) current).getCause() != null) {
-            current = ((InvocationTargetException) current).getCause();
-        }
-        return current;
-    }'''
-
-    text = replace_between(
-        text, start, end, replacement,
-        "delegate SYSTEM_ALERT_WINDOW AppOps to helper identity",
-    )
     path.write_text(text, encoding="utf-8")
 
 
@@ -229,11 +189,10 @@ def verify(root: Path) -> None:
     )).read_text(encoding="utf-8")
 
     required = [
+        (appops, "LegacySpecialAccessCompat.isSpecialAccessAppOp(args)"),
         (appops, "containsSystemAlertWindowOp"),
-        (appops, "AppOpsManager.OP_SYSTEM_ALERT_WINDOW"),
         (appops, "method.invoke(getBase(), args)"),
-        (appops, "rewriteSpecialAccessIdentity"),
-        (appops, "Delegating SYSTEM_ALERT_WINDOW AppOps check to real helper"),
+        (appops, "SYSTEM_ALERT_WINDOW AppOps delegated to original helper Binder"),
         (services, "new ActivityManager.RunningServiceInfo()"),
         (services, "running.service = new ComponentName(serviceInfo.packageName, serviceInfo.name)"),
         (services, "running.uid = processRecord.buid"),
@@ -242,6 +201,10 @@ def verify(root: Path) -> None:
         if invariant not in source:
             raise SystemExit(f"[legacy-service-gate] verification failed: {invariant}")
 
+    if "return method.invoke(getWho(), args);" in appops:
+        raise SystemExit(
+            "[legacy-service-gate] recursive-prone special AppOps getWho() invocation still present"
+        )
     if "manager.getRunningServices(Integer.MAX_VALUE)" in services:
         raise SystemExit(
             "[legacy-service-gate] host ActivityManager#getRunningServices dependency still present"
