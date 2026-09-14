@@ -9,10 +9,10 @@
     <queries>
         <!-- Android 11+ package visibility: the host must be able to verify the
              current generic helpers and the Floatify-specific permission helpers. -->
-        <package android:name="com.appcompat.runtime.engine32.v13.r3" />
-        <package android:name="com.appcompat.runtime.engine64.v13.r3" />
-        <package android:name="com.appcompat.runtime.engine32.v13.r3.floatify" />
-        <package android:name="com.appcompat.runtime.engine64.v13.r3.floatify" />
+        <package android:name="com.appcompat.runtime.engine32.v13.r4" />
+        <package android:name="com.appcompat.runtime.engine64.v13.r4" />
+        <package android:name="com.appcompat.runtime.engine32.v13.r4.floatify" />
+        <package android:name="com.appcompat.runtime.engine64.v13.r4.floatify" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
