@@ -8,9 +8,11 @@
 
     <queries>
         <!-- Package visibility is required on Android 11+ for the visible host to
-             verify/provision its versioned ABI helpers through PackageManager. -->
-        <package android:name="com.appcompat.runtime.engine32.v13" />
-        <package android:name="com.appcompat.runtime.engine64.v13" />
+             verify/provision its versioned ABI helpers through PackageManager.
+             The r2 suffix guarantees this build cannot reuse the stale helper from
+             the previous Floatify test. -->
+        <package android:name="com.appcompat.runtime.engine32.v13.r2" />
+        <package android:name="com.appcompat.runtime.engine64.v13.r2" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
