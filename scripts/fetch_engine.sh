@@ -48,10 +48,14 @@ python3 "$ROOT/scripts/patch_legacy_interactive_hardening.py" "$DEST"
 # window token bridge after the general interactive/window patches are in place.
 python3 "$ROOT/scripts/patch_legacy_dialog_hardening.py" "$DEST"
 # After accepting an EULA, old utilities often check SYSTEM_ALERT_WINDOW and query
-# running services. Keep the overlay grant truthful to the real helper UID/package
-# and answer service discovery from the virtual registry instead of restricted host
-# ActivityManager APIs.
+# running services. Keep the overlay grant truthful to the real helper UID/package,
+# answer service discovery from the virtual registry, and expose a granted virtual
+# NotificationListenerService as logically running immediately.
 python3 "$ROOT/scripts/patch_legacy_service_gate_hardening.py" "$DEST"
+# Real notification-listener permission must not eagerly instantiate large legacy
+# background/overlay services while Settings is still returning to onboarding. Start
+# virtual listeners lazily on their first real callback and preserve callback order.
+python3 "$ROOT/scripts/patch_notification_listener_lifecycle.py" "$DEST"
 python3 "$ROOT/scripts/patch_sdk_gate_calls.py" "$DEST"
 
 echo "Prepared patched compatibility engine $ENGINE_COMMIT"
