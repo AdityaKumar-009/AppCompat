@@ -25,10 +25,11 @@ object EngineBroker {
 
     private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v13"
     private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v13"
-    // r4 carries the OEM notification-access fixes. Changing the package suffix is
-    // intentional because versionCode remains 13; otherwise a device that already
-    // installed r3 would be considered current and silently keep the broken helper.
+    // Keep the r4 package identity so already-granted Android special access remains
+    // attached to the same real UID/package. The payload versionName below forces an
+    // in-place helper APK refresh when universal compatibility code changes.
     private const val ENGINE_PAYLOAD_SUFFIX = ".r4"
+    private const val REQUIRED_ENGINE_VERSION_NAME = "0.13.1-universal"
     private const val FLOATIFY_GUEST_PACKAGE = "com.jamworks.floatify"
     private const val FLOATIFY_HELPER_SUFFIX = ".floatify"
     private const val COMPAT_PROFILE_TARGET_SDK = 25
@@ -94,9 +95,12 @@ object EngineBroker {
         "engine64Installed" to isInstalled(context, 64),
         "engine32Version" to installedVersion(context, 32),
         "engine64Version" to installedVersion(context, 64),
+        "engine32VersionName" to installedVersionName(context, 32),
+        "engine64VersionName" to installedVersionName(context, 64),
         "floatify32Installed" to isInstalled(context, 32, FLOATIFY_GUEST_PACKAGE),
         "floatify64Installed" to isInstalled(context, 64, FLOATIFY_GUEST_PACKAGE),
         "requiredEngineVersion" to requiredEngineVersion,
+        "requiredEngineVersionName" to REQUIRED_ENGINE_VERSION_NAME,
         "compatProfileTargetSdk" to COMPAT_PROFILE_TARGET_SDK,
         "singleApkRouting" to true,
         "guestNamedPermissionHelpers" to true,
@@ -198,7 +202,8 @@ object EngineBroker {
 
     @Suppress("DEPRECATION")
     fun isInstalled(context: Context, bits: Int, guestPackage: String? = null): Boolean =
-        installedVersion(context, bits, guestPackage) == requiredEngineVersion
+        installedVersion(context, bits, guestPackage) == requiredEngineVersion &&
+            installedVersionName(context, bits, guestPackage) == REQUIRED_ENGINE_VERSION_NAME
 
     @Suppress("DEPRECATION")
     private fun installedVersion(
@@ -217,6 +222,28 @@ object EngineBroker {
                 context.packageManager.getPackageInfo(helperPackage, 0)
             }
             if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun installedVersionName(
+        context: Context,
+        bits: Int,
+        guestPackage: String? = null,
+    ): String? {
+        return try {
+            val helperPackage = packageFor(bits, guestPackage)
+            val info = if (Build.VERSION.SDK_INT >= 33) {
+                context.packageManager.getPackageInfo(
+                    helperPackage,
+                    PackageManager.PackageInfoFlags.of(0),
+                )
+            } else {
+                context.packageManager.getPackageInfo(helperPackage, 0)
+            }
+            info.versionName
         } catch (_: Throwable) {
             null
         }
