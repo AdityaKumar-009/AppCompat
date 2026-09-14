@@ -24,12 +24,12 @@ object EngineBroker {
     const val BRIDGE_CLASS = "com.appcompat.engine.EngineBridgeActivity"
 
     // v13 keeps the real helper on the API-25 compatibility target, but replaces
-    // v12's raw DEX string mutation with a structural dexlib2 rewrite. The r2 package
-    // suffix forces a clean helper install so a phone that already tested the first
-    // v13 build cannot silently reuse its stale runtime or signing certificate.
+    // v12's raw DEX string mutation with a structural dexlib2 rewrite. The r3 package
+    // suffix forces a clean helper install after the post-EULA AppOps/service fixes,
+    // so a phone that already tested r2 cannot silently reuse its stale runtime.
     private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v13"
     private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v13"
-    private const val ENGINE_PAYLOAD_SUFFIX = ".r2"
+    private const val ENGINE_PAYLOAD_SUFFIX = ".r3"
     private const val COMPAT_PROFILE_TARGET_SDK = 25
     private const val REGISTRY_PREFS = "appcompat_virtual_registry"
     private const val REGISTRY_JSON = "apps"
