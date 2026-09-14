@@ -25,7 +25,10 @@ object EngineBroker {
 
     private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v13"
     private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v13"
-    private const val ENGINE_PAYLOAD_SUFFIX = ".r3"
+    // r4 carries the OEM notification-access fixes. Changing the package suffix is
+    // intentional because versionCode remains 13; otherwise a device that already
+    // installed r3 would be considered current and silently keep the broken helper.
+    private const val ENGINE_PAYLOAD_SUFFIX = ".r4"
     private const val FLOATIFY_GUEST_PACKAGE = "com.jamworks.floatify"
     private const val FLOATIFY_HELPER_SUFFIX = ".floatify"
     private const val COMPAT_PROFILE_TARGET_SDK = 25
