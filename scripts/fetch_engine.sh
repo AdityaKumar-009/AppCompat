@@ -61,6 +61,11 @@ python3 "$ROOT/scripts/patch_legacy_service_gate_hardening.py" "$DEST"
 # background/overlay services while Settings is still returning to onboarding. Start
 # virtual listeners lazily on their first real callback and preserve callback order.
 python3 "$ROOT/scripts/patch_notification_listener_lifecycle.py" "$DEST"
+# App-agnostic runtime restoration: real alarms, broadcast/service PendingIntents,
+# manifest-receiver cold starts, resilient dynamic receiver registration and a real
+# BOOT_COMPLETED wake/relay component. These contracts are shared by reminders,
+# automation tools, widgets, sync clients and background utilities—not just Floatify.
+python3 "$ROOT/scripts/patch_universal_legacy_runtime.py" "$DEST"
 python3 "$ROOT/scripts/patch_sdk_gate_calls.py" "$DEST"
 
 echo "Prepared patched compatibility engine $ENGINE_COMMIT"
