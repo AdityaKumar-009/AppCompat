@@ -71,6 +71,10 @@ python3 "$ROOT/scripts/patch_universal_legacy_runtime.py" "$DEST"
 # Android instead of reporting success while doing nothing.
 python3 "$ROOT/scripts/patch_universal_semantic_noops.py" "$DEST"
 python3 "$ROOT/scripts/patch_universal_runtime_hardening.py" "$DEST"
+# Upstream also fake-succeeds every PowerManager wakelock operation. Let the real
+# helper UID own guest wakelocks so legacy alarms, players, downloads, navigation,
+# BLE/sensor loggers and background services retain their expected CPU lifetime.
+python3 "$ROOT/scripts/patch_universal_power_lifecycle.py" "$DEST"
 python3 "$ROOT/scripts/patch_sdk_gate_calls.py" "$DEST"
 
 echo "Prepared patched compatibility engine $ENGINE_COMMIT"
