@@ -23,13 +23,11 @@ object EngineBroker {
     const val ACTION_LAST_CRASH = "com.appcompat.runtime.engine.LAST_CRASH"
     const val BRIDGE_CLASS = "com.appcompat.engine.EngineBridgeActivity"
 
-    // v13 keeps the real helper on the API-25 compatibility target, but replaces
-    // v12's raw DEX string mutation with a structural dexlib2 rewrite. The r3 package
-    // suffix forces a clean helper install after the post-EULA AppOps/service fixes,
-    // so a phone that already tested r2 cannot silently reuse its stale runtime.
     private const val ENGINE32_PACKAGE = "com.appcompat.runtime.engine32.v13"
     private const val ENGINE64_PACKAGE = "com.appcompat.runtime.engine64.v13"
     private const val ENGINE_PAYLOAD_SUFFIX = ".r3"
+    private const val FLOATIFY_GUEST_PACKAGE = "com.jamworks.floatify"
+    private const val FLOATIFY_HELPER_SUFFIX = ".floatify"
     private const val COMPAT_PROFILE_TARGET_SDK = 25
     private const val REGISTRY_PREFS = "appcompat_virtual_registry"
     private const val REGISTRY_JSON = "apps"
@@ -37,8 +35,31 @@ object EngineBroker {
     private val requiredEngineVersion: Long
         get() = BuildConfig.VERSION_CODE.toLong()
 
-    fun packageFor(bits: Int): String =
-        (if (bits == 32) ENGINE32_PACKAGE else ENGINE64_PACKAGE) + ENGINE_PAYLOAD_SUFFIX
+    /**
+     * Android 11+ no longer allows ACTION_MANAGE_OVERLAY_PERMISSION to deep-link to
+     * a particular package; it always shows the top-level app list. Floatify gets a
+     * dedicated real helper package whose application label is "Floatify", so the
+     * user can identify the correct permission principal without guessing which
+     * generic AppCompat runtime belongs to the virtual app.
+     */
+    fun packageFor(bits: Int, guestPackage: String? = null): String {
+        val base = if (bits == 32) ENGINE32_PACKAGE else ENGINE64_PACKAGE
+        val guestSuffix = if (guestPackage == FLOATIFY_GUEST_PACKAGE) {
+            FLOATIFY_HELPER_SUFFIX
+        } else {
+            ""
+        }
+        return base + ENGINE_PAYLOAD_SUFFIX + guestSuffix
+    }
+
+    private fun assetFor(bits: Int, guestPackage: String?): String {
+        val prefix = if (guestPackage == FLOATIFY_GUEST_PACKAGE) "floatify" else "appcompat"
+        return if (bits == 32) {
+            "engines/${prefix}-engine32.apk"
+        } else {
+            "engines/${prefix}-engine64.apk"
+        }
+    }
 
     fun engineSupported(bits: Int): Boolean = when (bits) {
         32 -> Build.SUPPORTED_32_BIT_ABIS.isNotEmpty()
@@ -70,25 +91,44 @@ object EngineBroker {
         "engine64Installed" to isInstalled(context, 64),
         "engine32Version" to installedVersion(context, 32),
         "engine64Version" to installedVersion(context, 64),
+        "floatify32Installed" to isInstalled(context, 32, FLOATIFY_GUEST_PACKAGE),
+        "floatify64Installed" to isInstalled(context, 64, FLOATIFY_GUEST_PACKAGE),
         "requiredEngineVersion" to requiredEngineVersion,
         "compatProfileTargetSdk" to COMPAT_PROFILE_TARGET_SDK,
-        "singleApkRouting" to true
+        "singleApkRouting" to true,
+        "guestNamedPermissionHelpers" to true,
     )
 
-    fun ensureInstalled(context: Context, bits: Int, callback: (Boolean, String?) -> Unit) {
+    // Retain the original generic API for host status/bootstrap callers.
+    fun ensureInstalled(context: Context, bits: Int, callback: (Boolean, String?) -> Unit) =
+        ensureInstalled(context, bits, null, callback)
+
+    fun ensureInstalled(
+        context: Context,
+        bits: Int,
+        guestPackage: String?,
+        callback: (Boolean, String?) -> Unit,
+    ) {
         if (!engineSupported(bits)) {
             callback(false, "This device does not expose a ${bits}-bit Android application runtime.")
             return
         }
-        if (isInstalled(context, bits)) {
+        if (isInstalled(context, bits, guestPackage)) {
             callback(true, null)
             return
         }
 
-        val assetPath = if (bits == 32) "engines/appcompat-engine32.apk" else "engines/appcompat-engine64.apk"
+        val enginePackage = packageFor(bits, guestPackage)
+        val assetPath = assetFor(bits, guestPackage)
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
-            setAppPackageName(packageFor(bits))
+            setAppPackageName(enginePackage)
+            if (guestPackage == FLOATIFY_GUEST_PACKAGE) {
+                // This also makes the PackageInstaller confirmation UI identify the
+                // helper by the virtual app name. The installed manifest carries the
+                // same label for Special app access / notification access Settings.
+                setAppLabel("Floatify")
+            }
             if (Build.VERSION.SDK_INT >= 31) {
                 setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
             }
@@ -128,9 +168,9 @@ object EngineBroker {
         action: String,
         packageName: String,
         apkFile: File?,
-        requestCode: Int
+        requestCode: Int,
     ) {
-        val enginePackage = packageFor(bits)
+        val enginePackage = packageFor(bits, packageName)
         val intent = Intent(action).apply {
             component = ComponentName(enginePackage, BRIDGE_CLASS)
             putExtra("packageName", packageName)
@@ -142,7 +182,7 @@ object EngineBroker {
             val uri: Uri = FileProvider.getUriForFile(
                 activity,
                 "${activity.packageName}.files",
-                apkFile
+                apkFile,
             )
             intent.data = uri
             intent.clipData = android.content.ClipData.newRawUri("legacy-apk", uri)
@@ -154,19 +194,24 @@ object EngineBroker {
     }
 
     @Suppress("DEPRECATION")
-    fun isInstalled(context: Context, bits: Int): Boolean =
-        installedVersion(context, bits) == requiredEngineVersion
+    fun isInstalled(context: Context, bits: Int, guestPackage: String? = null): Boolean =
+        installedVersion(context, bits, guestPackage) == requiredEngineVersion
 
     @Suppress("DEPRECATION")
-    private fun installedVersion(context: Context, bits: Int): Long? {
+    private fun installedVersion(
+        context: Context,
+        bits: Int,
+        guestPackage: String? = null,
+    ): Long? {
         return try {
+            val helperPackage = packageFor(bits, guestPackage)
             val info = if (Build.VERSION.SDK_INT >= 33) {
                 context.packageManager.getPackageInfo(
-                    packageFor(bits),
-                    PackageManager.PackageInfoFlags.of(0)
+                    helperPackage,
+                    PackageManager.PackageInfoFlags.of(0),
                 )
             } else {
-                context.packageManager.getPackageInfo(packageFor(bits), 0)
+                context.packageManager.getPackageInfo(helperPackage, 0)
             }
             if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
         } catch (_: Throwable) {
@@ -184,7 +229,7 @@ object EngineBroker {
         packageName: String,
         name: String,
         bits: Int,
-        apkPath: String? = null
+        apkPath: String? = null,
     ) {
         val apps = readRegistry(context)
         var oldPath: String? = null
@@ -202,7 +247,7 @@ object EngineBroker {
                 .put("packageName", packageName)
                 .put("name", name.ifBlank { packageName })
                 .put("engineBits", bits)
-                .put("apkPath", apkPath?.takeIf { it.isNotBlank() } ?: oldPath ?: "")
+                .put("apkPath", apkPath?.takeIf { it.isNotBlank() } ?: oldPath ?: ""),
         )
         writeRegistry(context, filtered)
     }
@@ -277,8 +322,8 @@ object EngineBroker {
                 "packageName" to packageName,
                 "name" to item.optString("name"),
                 "engineBits" to bits,
-                "runtimeInstalled" to isInstalled(context, bits),
-                "hasSourceApk" to (registeredApkPath(context, packageName) != null)
+                "runtimeInstalled" to isInstalled(context, bits, packageName),
+                "hasSourceApk" to (registeredApkPath(context, packageName) != null),
             )
         }
         return out
