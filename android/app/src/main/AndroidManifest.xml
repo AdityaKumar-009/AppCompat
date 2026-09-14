@@ -7,12 +7,12 @@
     <uses-permission android:name="com.appcompat.runtime.permission.ENGINE" />
 
     <queries>
-        <!-- Package visibility is required on Android 11+ for the visible host to
-             verify/provision its versioned ABI helpers through PackageManager.
-             The r2 suffix guarantees this build cannot reuse the stale helper from
-             the previous Floatify test. -->
-        <package android:name="com.appcompat.runtime.engine32.v13.r2" />
-        <package android:name="com.appcompat.runtime.engine64.v13.r2" />
+        <!-- Android 11+ package visibility: the host must be able to verify the
+             current generic helpers and the Floatify-specific permission helpers. -->
+        <package android:name="com.appcompat.runtime.engine32.v13.r3" />
+        <package android:name="com.appcompat.runtime.engine64.v13.r3" />
+        <package android:name="com.appcompat.runtime.engine32.v13.r3.floatify" />
+        <package android:name="com.appcompat.runtime.engine64.v13.r3.floatify" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
