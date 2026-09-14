@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """Harden ordinary legacy onboarding/dialog paths on modern Android hosts.
 
-This patch runs after the existing package/window compatibility layers.  It fixes two
+This patch runs after the existing package/window compatibility layers. It fixes two
 failure modes that are especially common in old apps whose first interactive action
 opens an AlertDialog:
 
 1. BlackBox's PackageManagerCompat wrapper swallows every Throwable raised while
-   materialising PackageInfo and returns null.  A proxy-side retry with flags=0 is
+   materialising PackageInfo and returns null. A proxy-side retry with flags=0 is
    therefore not enough: even base metadata can still collapse to null on a newer
-   framework/vendor build.  Preserve the installed-package contract by returning a
+   framework/vendor build. Preserve the installed-package contract by returning a
    minimal PackageInfo (package/version/requested permissions) when rich generation
    fails.
-2. Dialogs are separate application windows.  Some modern framework/vendor paths can
+2. Dialogs are separate application windows. Some modern framework/vendor paths can
    lose the activity token while a virtual activity itself still renders normally.
    Remember only a token that system_server has already accepted for a top-level app
    window, fill a missing token for later application/sub-windows, and retry only the
-   explicit BAD_APP_TOKEN/BAD_SUBWINDOW_TOKEN/NOT_APP_TOKEN result codes.  Never
+   explicit BAD_APP_TOKEN/BAD_SUBWINDOW_TOKEN/NOT_APP_TOKEN result codes. Never
    replace a successful/non-null token pre-emptively.
 
 The changes are generic; there are no Floatify package-name checks.
@@ -82,7 +82,7 @@ def patch_package_info_fallback(root: Path) -> None:
 
         // An installed, visible virtual package must still expose its identity and
         // version metadata even if a newer framework/vendor field breaks rich
-        // component materialisation.  Old EULA/changelog code commonly requests
+        // component materialisation. Old EULA/changelog code commonly requests
         // GET_ACTIVITIES only to read versionCode/versionName immediately.
         PackageInfo minimal = generateMinimalPackageInfo(p, state, userId);
         if (minimal != null) {
@@ -163,7 +163,7 @@ def patch_application_window_tokens(root: Path) -> None:
         '''    private IInterface mSession;
 
     // Per guest process: remember only a token after system_server has accepted a
-    // top-level application window using it.  This makes it a safe fallback for a
+    // top-level application window using it. This makes it a safe fallback for a
     // later Dialog/Popup whose virtual WindowManager lost its default activity token.
     private static volatile IBinder sLastAcceptedApplicationToken;
 ''',
@@ -271,12 +271,12 @@ def patch_application_window_tokens(root: Path) -> None:
         if (!(value instanceof Number)) return false;
         int result = ((Number) value).intValue();
         // WindowManagerGlobal.ADD_BAD_APP_TOKEN / ADD_BAD_SUBWINDOW_TOKEN /
-        // ADD_NOT_APP_TOKEN.  Restrict recovery to token-specific failures only.
+        // ADD_NOT_APP_TOKEN. Restrict recovery to token-specific failures only.
         return result == -1 || result == -2 || result == -3;
     }
 
 '''
-    if "addApplicationWindowWithTokenFallback" not in text.split(marker)[0]:
+    if "private static Object addApplicationWindowWithTokenFallback" not in text:
         if marker not in text:
             raise SystemExit("[legacy-dialog] window helper insertion point not found")
         text = text.replace(marker, helpers + marker, 1)
@@ -322,7 +322,7 @@ def verify(root: Path) -> None:
         (pm, "Using minimal PackageInfo fallback"),
         (pm, "pi.versionCode = p.mVersionCode"),
         (window, "sLastAcceptedApplicationToken"),
-        (window, "addApplicationWindowWithTokenFallback"),
+        (window, "private static Object addApplicationWindowWithTokenFallback"),
         (window, "isBadApplicationTokenResult"),
         (window, "Restored missing application window token"),
         (window, "lp.packageName = BlackBoxCore.getHostPkg()"),
