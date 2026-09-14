@@ -38,6 +38,11 @@ python3 "$ROOT/scripts/patch_guest_sdk_postparse.py" "$DEST"
 python3 "$ROOT/scripts/patch_guest_sdk_structural.py" "$DEST"
 python3 "$ROOT/scripts/patch_guest_sdk_structural_hardening.py" "$DEST"
 python3 "$ROOT/scripts/patch_legacy_window_translation.py" "$DEST"
+# Interactive legacy utilities (Floatify-style onboarding + overlays) expose a few
+# edge cases only after user input: own-package PackageInfo nulls, OEM grant fallbacks
+# whose action gets mutated, and legacy alert types that Android accepts with the
+# wrong z-order. Apply these after the relevant compatibility helpers exist.
+python3 "$ROOT/scripts/patch_legacy_interactive_hardening.py" "$DEST"
 python3 "$ROOT/scripts/patch_sdk_gate_calls.py" "$DEST"
 
 echo "Prepared patched compatibility engine $ENGINE_COMMIT"
