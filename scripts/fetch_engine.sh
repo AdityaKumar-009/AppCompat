@@ -47,6 +47,11 @@ python3 "$ROOT/scripts/patch_legacy_interactive_hardening.py" "$DEST"
 # AlertDialog. Harden the server-side PackageInfo contract and ordinary application
 # window token bridge after the general interactive/window patches are in place.
 python3 "$ROOT/scripts/patch_legacy_dialog_hardening.py" "$DEST"
+# After accepting an EULA, old utilities often check SYSTEM_ALERT_WINDOW and query
+# running services. Keep the overlay grant truthful to the real helper UID/package
+# and answer service discovery from the virtual registry instead of restricted host
+# ActivityManager APIs.
+python3 "$ROOT/scripts/patch_legacy_service_gate_hardening.py" "$DEST"
 python3 "$ROOT/scripts/patch_sdk_gate_calls.py" "$DEST"
 
 echo "Prepared patched compatibility engine $ENGINE_COMMIT"
