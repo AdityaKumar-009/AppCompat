@@ -210,7 +210,8 @@ class MainActivity : FlutterActivity() {
         pendingEngineName = appName
         pendingEngineApk = apk
 
-        if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls() && !EngineBroker.isInstalled(this, bits)) {
+        if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls() &&
+            !EngineBroker.isInstalled(this, bits, pendingEnginePackage)) {
             try {
                 waitingForUnknownSources = true
                 startActivityForResult(
@@ -229,7 +230,7 @@ class MainActivity : FlutterActivity() {
     private fun provisionAndStartPendingEngine() {
         val result = pendingEngineResult ?: return
         val bits = pendingEngineBits
-        EngineBroker.ensureInstalled(this, bits) { success, message ->
+        EngineBroker.ensureInstalled(this, bits, pendingEnginePackage) { success, message ->
             runOnUiThread {
                 if (pendingEngineResult !== result) return@runOnUiThread
                 if (!success) {
