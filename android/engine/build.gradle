@@ -30,14 +30,17 @@ android {
 
     // `runtime` selects the CPU ABI. `guest` optionally gives a legacy app its own
     // real Android permission principal. Android 11+ intentionally forces overlay
-    // requests to a top-level app list, so a Floatify-specific helper is labeled
+    // requests to a top-level app list, so a Floatify-specific helper is labelled
     // "Floatify" there instead of asking users to guess among AppCompat runtimes.
     flavorDimensions += ["runtime", "guest"]
     productFlavors {
         arm32 {
             dimension "runtime"
             applicationId "com.appcompat.runtime.engine32.v13"
-            applicationIdSuffix ".r3"
+            // r4 forces a genuinely fresh helper after fixing Xiaomi/MIUI notification
+            // access routing and OEM grant detection. Reusing r3 would leave the old
+            // Settings intent code installed because the public versionCode stays 13.
+            applicationIdSuffix ".r4"
             ndk {
                 abiFilters "armeabi-v7a"
             }
@@ -46,7 +49,7 @@ android {
         arm64 {
             dimension "runtime"
             applicationId "com.appcompat.runtime.engine64.v13"
-            applicationIdSuffix ".r3"
+            applicationIdSuffix ".r4"
             ndk {
                 abiFilters "arm64-v8a"
             }
