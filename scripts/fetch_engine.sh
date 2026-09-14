@@ -43,6 +43,10 @@ python3 "$ROOT/scripts/patch_legacy_window_translation.py" "$DEST"
 # whose action gets mutated, and legacy alert types that Android accepts with the
 # wrong z-order. Apply these after the relevant compatibility helpers exist.
 python3 "$ROOT/scripts/patch_legacy_interactive_hardening.py" "$DEST"
+# Some onboarding screens immediately query version metadata and show a platform
+# AlertDialog. Harden the server-side PackageInfo contract and ordinary application
+# window token bridge after the general interactive/window patches are in place.
+python3 "$ROOT/scripts/patch_legacy_dialog_hardening.py" "$DEST"
 python3 "$ROOT/scripts/patch_sdk_gate_calls.py" "$DEST"
 
 echo "Prepared patched compatibility engine $ENGINE_COMMIT"
