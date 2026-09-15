@@ -75,6 +75,11 @@ python3 "$ROOT/scripts/patch_universal_runtime_hardening.py" "$DEST"
 # helper UID own guest wakelocks so legacy alarms, players, downloads, navigation,
 # BLE/sensor loggers and background services retain their expected CPU lifetime.
 python3 "$ROOT/scripts/patch_universal_power_lifecycle.py" "$DEST"
+# Modern Android validates AttributionSource UID/package pairs for real providers and
+# Wi-Fi services. Normalize those calls to the helper identity, make failed read-only
+# provider queries safely empty instead of null, and translate old hidden Wi-Fi AP
+# calls to Local Only Hotspot where the platform exposes a legal third-party path.
+python3 "$ROOT/scripts/patch_universal_provider_wifi_compat.py" "$DEST"
 python3 "$ROOT/scripts/patch_sdk_gate_calls.py" "$DEST"
 
 echo "Prepared patched compatibility engine $ENGINE_COMMIT"
