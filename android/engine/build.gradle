@@ -19,8 +19,9 @@ android {
         versionCode 13
         // Keep versionCode aligned with the public v13 host, but use versionName as
         // an internal payload revision. The host checks both values so a device that
-        // already has an older r4 helper is updated in-place to the universal engine.
-        versionName "0.13.1-universal"
+        // already has an older r4 helper is updated in-place to the latest universal
+        // provider/Wi-Fi compatibility runtime without losing its Android grants.
+        versionName "0.13.2-universal"
         multiDexEnabled true
         buildConfigField "int", "COMPAT_PROFILE_TARGET_SDK", "25"
         manifestPlaceholders = [
