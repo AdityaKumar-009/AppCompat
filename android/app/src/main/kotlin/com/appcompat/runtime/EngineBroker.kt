@@ -29,7 +29,7 @@ object EngineBroker {
     // attached to the same real UID/package. The payload versionName below forces an
     // in-place helper APK refresh when universal compatibility code changes.
     private const val ENGINE_PAYLOAD_SUFFIX = ".r4"
-    private const val REQUIRED_ENGINE_VERSION_NAME = "0.13.1-universal"
+    private const val REQUIRED_ENGINE_VERSION_NAME = "0.13.2-universal"
     private const val FLOATIFY_GUEST_PACKAGE = "com.jamworks.floatify"
     private const val FLOATIFY_HELPER_SUFFIX = ".floatify"
     private const val COMPAT_PROFILE_TARGET_SDK = 25
