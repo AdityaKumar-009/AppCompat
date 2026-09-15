@@ -42,6 +42,11 @@ python3 "$ROOT/scripts/patch_guest_sdk_postparse.py" "$DEST"
 # run compile/deep-validation hardening before any Android compilation begins.
 python3 "$ROOT/scripts/patch_guest_sdk_structural.py" "$DEST"
 python3 "$ROOT/scripts/patch_guest_sdk_structural_hardening.py" "$DEST"
+# Removed framework methods can fail at Class.getMethod() before any Binder hook runs.
+# Structurally route guest Class.getMethod/getDeclaredMethod and Method.invoke through
+# a transparent shim which delegates ordinary reflection and translates only known
+# obsolete Android APIs. This is generic infrastructure, not an app package exception.
+python3 "$ROOT/scripts/patch_legacy_reflection_translation.py" "$DEST"
 python3 "$ROOT/scripts/patch_legacy_window_translation.py" "$DEST"
 # Interactive legacy utilities (Floatify-style onboarding + overlays) expose a few
 # edge cases only after user input: own-package PackageInfo nulls, OEM grant fallbacks
@@ -80,6 +85,10 @@ python3 "$ROOT/scripts/patch_universal_power_lifecycle.py" "$DEST"
 # provider queries safely empty instead of null, and translate old hidden Wi-Fi AP
 # calls to Local Only Hotspot where the platform exposes a legal third-party path.
 python3 "$ROOT/scripts/patch_universal_provider_wifi_compat.py" "$DEST"
+# Keep hotspot translation compile-SDK independent: use runtime reflection to preserve
+# requested SSID/password where Android exposes configured LOHS internally/publicly,
+# then fall back to framework-generated LOHS credentials rather than fake success.
+python3 "$ROOT/scripts/patch_universal_provider_wifi_hardening.py" "$DEST"
 python3 "$ROOT/scripts/patch_sdk_gate_calls.py" "$DEST"
 
 echo "Prepared patched compatibility engine $ENGINE_COMMIT"
